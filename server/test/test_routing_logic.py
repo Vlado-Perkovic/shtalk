@@ -30,6 +30,8 @@ async def client_task(message, target, server_host="localhost", server_port=8888
     finally:
         writer.close()
         await writer.wait_closed()
+        reader.close()
+        await reader.wait_closed()
 
 
 async def test_routing_logic():

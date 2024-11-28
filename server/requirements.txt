@@ -1,1 +1,6 @@
 aiosqlite
+bcrypt
+pyjwt
+pyotp 
+email-validator
+aiosmtplib

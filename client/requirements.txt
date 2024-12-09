@@ -1,4 +1,6 @@
 click==8.1.3  # CLI library for Python
 cryptography==41.0.3  # For encryption
 requests==2.31.0  # For making HTTP requests (if needed)
-
+rich
+textual
+textual_inputs

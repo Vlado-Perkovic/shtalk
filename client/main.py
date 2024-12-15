@@ -9,7 +9,8 @@ def main(host, port):
     """
     Main function to run the client application with fullscreen TUI.
     """
-    ChatApp.run(title="Chat App", log="chat.log", host=host, port=port)
+    gas = ChatApp(host, port)
+    gas.run()
 
 
 if __name__ == "__main__":

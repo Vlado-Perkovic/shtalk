@@ -1,10 +1,11 @@
 import asyncio
 import socket
+import json
 from datetime import datetime
 from textual.app import App
-from textual.widgets import Footer, Header
-from textual_inputs import TextInput
-from textual.widgets import ScrollView
+from textual.screen import Screen
+from textual.widgets import Input, Header, Button, Static
+from textual.scroll_view import ScrollView
 import logging
 
 logging.basicConfig(filename='app.log', level=logging.DEBUG)
@@ -21,6 +22,7 @@ class ChatClient:
         self.client_socket = None
         self.is_connected = False
         self.chat_history = []  # Stores chat messages
+        self.current_group = "general"  # Default group
 
     async def connect(self):
         """
@@ -39,13 +41,22 @@ class ChatClient:
                 self.client_socket.close()
                 self.client_socket = None
 
-    def send_message(self, message: str):
+    def send_message(self, message: str, receiver: str = "general"):
         """
         Sends a message to the server.
         """
         if self.is_connected and self.client_socket:
             try:
-                self.client_socket.sendall(message.encode("utf-8"))
+                message_json = {
+                    "id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
+                    "content": message,  # This will be encrypted in the future
+                    "timestamp": datetime.now().isoformat(),
+                    "receiver": receiver,
+                    "sender": "you",  # Replace with the actual username
+                }
+                self.client_socket.sendall(
+                    json.dumps(message_json).encode("utf-8"))
+                # self.client_socket.sendall(message.encode("utf-8"))
             except Exception as e:
                 print(f"Error sending message: {e}")
 
@@ -73,7 +84,9 @@ class ChatClient:
         try:
             data = self.client_socket.recv(1024)
             if data:
-                return data.decode("utf-8")
+                # return data.decode("utf-8")
+                message_json = json.loads(data.decode("utf-8"))
+                return message_json
         except BlockingIOError:
             return None
         except Exception as e:
@@ -81,6 +94,119 @@ class ChatClient:
             self.is_connected = False
             self.close()
             return None
+
+
+class LoginScreen(Screen):
+    """
+    A screen for user login.
+    """
+
+    def compose(self):
+        yield Header()
+        yield Static("Login", id="login_title")
+        self.username_input = Input(
+            placeholder="Username", id="username_input")
+        self.password_input = Input(
+            placeholder="Password", id="password_input", password=True)
+        self.login_button = Button(label="Login", id="login_button")
+        self.register_button = Button(label="Register", id="register_button")
+        yield self.username_input
+        yield self.password_input
+        yield self.login_button
+        yield self.register_button
+
+    async def on_button_pressed(self, button: Button):
+        if button.button.id == "login_button":
+            username = self.username_input.value.strip()
+            password = self.password_input.value.strip()
+            logging.debug(f'user: {username} \npass:{password}')
+            await self.app.handle_login(username, password)
+        elif button.button.id == "register_button":
+            await self.app.push_screen("register")
+
+
+class RegisterScreen(Screen):
+    """
+    A screen for user registration.
+    """
+
+    def compose(self):
+        yield Header()
+        yield Static("Register", id="register_title")
+        self.username_input = Input(
+            placeholder="Username", id="register_username")
+        self.password_input = Input(
+            placeholder="Password", id="register_password", password=True)
+        self.confirm_password_input = Input(
+            placeholder="Confirm Password", id="confirm_password", password=True)
+        self.register_button = Button(label="Register", id="register_button")
+        self.back_button = Button(label="Back", id="back_button")
+        yield self.username_input
+        yield self.password_input
+        yield self.confirm_password_input
+        yield self.register_button
+        yield self.back_button
+
+    async def on_button_pressed(self, button: Button):
+        if button.button.id == "register_button":
+            username = self.username_input.value.strip()
+            password = self.password_input.value.strip()
+            confirm_password = self.confirm_password_input.value.strip()
+            if password == confirm_password:
+                await self.app.handle_register(username, password)
+            else:
+                await self.app.show_error("Passwords do not match")
+        elif button.button.id == "back_button":
+            await self.app.pop_screen()
+
+
+class ChatScreen(Screen):
+    """
+    The main chat interface.
+    """
+
+    def __init__(self, client):
+        super().__init__()
+        self.client = client
+
+    def compose(self):
+        yield Header()
+        self.chat_history = ScrollView()
+        self.message_input = Input(
+            placeholder="Type your message...", id="message_input")
+        self.send_button = Button(label="Send", id="send_button")
+        yield self.chat_history
+        yield self.message_input
+        yield self.send_button
+
+    # async def on_button_pressed(self, button: Button):
+    #     if button.id == "send_button":
+    #         message = self.message_input.value.strip()
+    #         if message:
+    #             self.client.send_message(message)
+    #             self.message_input.value = ""
+
+    async def on_button_pressed(self, button: Button):
+        if button.button.id == "send_button":
+            message = self.message_input.value.strip()
+            if message:
+                self.client.send_message(message)
+                await self.add_message("You", message, False)
+                self.message_input.value = ""
+
+    async def add_message(self, sender: str, message: str, is_system: bool):
+        """
+        Add a message to the chat history.
+        """
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        formatted_message = f"[{timestamp}] {sender}: {
+            message}" if not is_system else f"{message}"
+        self.client.chat_history.append(formatted_message)
+
+        # Update chat history display
+        # chat_content = "\n".join(self.client.chat_history)
+        # logging.debug(f"Updated chat content:\n{chat_content}")
+        await self.chat_history.mount(Static(formatted_message))
 
 
 class ChatApp(App):
@@ -93,25 +219,29 @@ class ChatApp(App):
         self.client = ChatClient(host, port)
 
     async def on_load(self):
-        # Bind keys
-        await self.bind("q", "quit", "Quit")
-        await self.bind("enter", "send_message", "Send Message")
+        self.install_screen(LoginScreen(), name="login")
+        self.install_screen(RegisterScreen(), name="register")
+        self.push_screen("login")
+
+        # # Bind keys
+        # await self.bind("q", "quit", "Quit")
+        # await self.bind("enter", "send_message", "Send Message")
 
     async def on_mount(self):
         # Header and Footer
-        await self.view.dock(Header(), edge="top")
-        await self.view.dock(Footer(), edge="bottom")
-
-        # Chat history panel (ScrollView for dynamic content)
-        self.chat_history = ScrollView()
-        await self.view.dock(self.chat_history, edge="top", size=40)
-
-        # Message input
-        self.message_input = TextInput(
-            placeholder="Type your message...", title="Message"
-        )
-        await self.view.dock(self.message_input, edge="bottom")
-
+        # await self.view.dock(Header(), edge="top")
+        # await self.view.dock(Footer(), edge="bottom")
+        #
+        # # Chat history panel (ScrollView for dynamic content)
+        # self.chat_history = ScrollView()
+        # await self.view.dock(self.chat_history, edge="top", size=40)
+        #
+        # # Message input
+        # self.message_input = TextInput(
+        #     placeholder="Type your message...", title="Message"
+        # )
+        # await self.view.dock(self.message_input, edge="bottom")
+        #
         # Attempt to connect in the background
         asyncio.create_task(self.attempt_connection())
 
@@ -136,6 +266,25 @@ class ChatApp(App):
 
             await self.add_message(None, "Trying to connect...", True)
             await asyncio.sleep(retry_interval)
+
+    async def handle_login(self, username: str, password: str):
+        # Simulate authentication request
+        if username == "user" and password == "pass":  # Replace with actual request handling
+            await self.push_screen(ChatScreen(self.client))
+        else:
+            await self.show_error("Invalid login credentials")
+
+    async def handle_register(self, username: str, password: str):
+        # Simulate registration request
+        if username and password:  # Replace with actual request handling
+            await self.show_error("Registration successful! Please log in.")
+            await self.pop_screen()
+        else:
+            await self.show_error("Invalid registration details")
+
+    async def show_error(self, message: str):
+        logging.error(message)
+        # Implement error display logic
 
     async def action_send_message(self):
         """

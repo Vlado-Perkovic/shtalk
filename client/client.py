@@ -6,6 +6,8 @@ from textual.app import App
 from textual.screen import Screen
 from textual.widgets import Input, Header, Button, Static
 from textual.scroll_view import ScrollView
+from textual.containers import Container, Vertical, Horizontal
+from textual.binding import Binding
 import logging
 
 from enum import Enum
@@ -17,16 +19,6 @@ class ConnectionStatus(Enum):
     DISCONNECTED = "Disconnected"
     CONNECTING = "Connecting"
     CONNECTED = "Connected"
-
-
-def update_text(self, text, style):
-
-    if style == "green":
-        print(f"\033[92m{text}\033[0m")  # Green text
-    elif style == "yellow":
-        print(f"\033[93m{text}\033[0m")  # Yellow text
-    else:
-        print(f"\033[91m{text}\033[0m")  # Red text
 
 
 class ChatClient:
@@ -127,22 +119,45 @@ class LoginScreen(Screen):
     """
     A screen for user login.
     """
+    CSS_PATH = "client.tcss"
+
+    def __init__(self, client: ChatClient):
+        super().__init__()
+        self.client = client
+        self.status_label = Static("Status: Disconnected", id="status_label")
 
     def compose(self):
         yield Header()
-        yield Static("Login", id="login_title")
+        # with Vertical():
         self.username_input = Input(
             placeholder="Username", id="username_input")
         self.password_input = Input(
             placeholder="Password", id="password_input", password=True)
         self.login_button = Button(label="Login", id="login_button")
-        self.register_button = Button(label="Register", id="register_button")
-        self.status_label = Static("Status: Disconnected", id="status_label")
+        self.register_button = Button(
+            label="Register", id="register_button")
+        self.status_label = Static(
+            "Status: Disconnected", id="status_label")
+        self.login_title = Container(Static("Login", id="login_title"))
+        self.login_title.styles.height = 3
+        self.login_title.styles.background = "gray"
+        self.login_title.styles.color = "white"
+        self.login_title.styles.text_align = "center"
         yield self.status_label
-        yield self.username_input
-        yield self.password_input
-        yield self.login_button
-        yield self.register_button
+        yield Container(Static("LOGIN", classes="question"),
+                        Vertical(
+                            self.username_input,
+                            self.password_input,
+                            classes="inputs",
+
+        ),
+
+            Horizontal(
+                            self.login_button,
+                            self.register_button,
+                            classes="buttons"),
+            id="dialog",
+        )
 
     async def on_button_pressed(self, button: Button):
         if button.button.id == "login_button":
@@ -159,11 +174,11 @@ class LoginScreen(Screen):
         """
         status = self.client.connection_status
         if status == ConnectionStatus.CONNECTED:
-            self.status_label.update("Status: Connected", style="green")
+            self.status_label.update("Status: Connected")
         elif status == ConnectionStatus.CONNECTING:
-            self.status_label.update("Status: Connecting...", style="yellow")
+            self.status_label.update("Status: Connecting...")
         else:
-            self.status_label.update("Status: Disconnected", style="red")
+            self.status_label.update("Status: Disconnected")
 
     async def on_mount(self):
         # Run status updates in the background
@@ -237,6 +252,8 @@ class ChatScreen(Screen):
                 await self.add_message("You", message, False)
                 self.message_input.value = ""
 
+    # def action_send_message(self):
+
     async def add_message(self, sender: str, message: str, is_system: bool):
         """
         Add a message to the chat history.
@@ -253,13 +270,16 @@ class ChatApp(App):
     """
     A textual TUI for the chat application.
     """
+    BINDINGS = [
+        Binding("enter", "send_message", "Send Message")
+    ]
 
     def __init__(self, host: str, port: int, **kwargs):
         super().__init__(**kwargs)
         self.client = ChatClient(host, port)
 
     async def on_load(self):
-        self.install_screen(LoginScreen(), name="login")
+        self.install_screen(LoginScreen(self.client), name="login")
         self.install_screen(RegisterScreen(), name="register")
         self.push_screen("login")
 
@@ -351,20 +371,21 @@ class ChatApp(App):
         logging.error(message)
         # Implement error display logic (e.g., via a modal or notification bar)
 
-    async def action_send_message(self):
-        """
-        Handles sending a message when the Enter key is pressed.
-        """
-        message = self.message_input.value.strip()
-        if message:
-            self.client.send_message(message)
-            await self.add_message("You", message, False)
-            self.message_input.value = ""
+    def action_send_message(self):
+        logging.debug("AAAAAAAAAAAAAAAAAAAAAA")
+        if isinstance(self.screen, ChatScreen):
+            message = self.screen.message_input.value.strip()
+            if message:
+                self.client.send_message(message)
+                # await self.screen.add_message("You", message, False)
+                asyncio.create_task(
+                    self.screen.add_message("You", message, False))
+                self.screen.message_input.value = ""
 
     async def add_message(self, sender: str, message: str, is_system: bool):
         """
-        Add a message to the chat history.
-        """
+            Add a message to the chat history.
+            """
         timestamp = datetime.now().strftime("%H:%M:%S")
         formatted_message = f"[{timestamp}] {sender}: {
             message}" if not is_system else f"{message}"

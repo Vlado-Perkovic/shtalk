@@ -1,4 +1,3 @@
-import asyncio
 import json
 import aiosqlite
 import bcrypt
@@ -6,33 +5,59 @@ import secrets
 from email_validator import validate_email, EmailNotValidError
 import jwt
 from datetime import datetime, timedelta
-import pyotp
+from config import clients, JWT_SECRET
+import handlers as h
 
-JWT_SECRET = "jwt_secret_from_env"
-HOST = '127.0.0.1'
-PORT = 8888
-clients = {}
-groups = {
-    'group1': []
-}
+# Add your functions here from the original script
 
-def setup_mfa():
-    """
-    Generates and returns a TOTP secret for a user.
-    """
-    secret = pyotp.random_base32()
-    totp = pyotp.TOTP(secret)
-    print(f"Scan this QR Code with an authenticator app: {totp.provisioning_uri('user@example.com', issuer_name='SecureChat')}")
-    return secret
+async def create_group(user_id, group_name, description, database):
+    # Check if the group already exists
+    existing_group = await database.fetch_one(
+        "SELECT * FROM groups WHERE group_name = :group_name",
+        {"group_name": group_name}
+    )
 
-def verify_mfa(secret, code):
-    """
-    Verifies the TOTP code provided by the user.
-    """
-    totp = pyotp.TOTP(secret)
-    return totp.verify(code)
+    if existing_group:
+        return {"error": "Group already exists"}
 
-async def login_user(username, password, mfa_code, database):
+    # Insert the group into the database
+    await database.execute(
+        """
+        INSERT INTO groups (group_name, description) 
+        VALUES (:group_name, :description)
+        """,
+        {"group_name": group_name, "description": description}
+    )
+
+    # Add the user as the first member (admin) of the group
+    await add_user_to_group(group_name, user_id,database)
+
+    return {"success": f"Group '{group_name}' created"}
+
+
+async def add_user_to_group(group_name, user_id, database):
+    # Check if the user is already in the group
+    existing_member = await database.fetch_one(
+        "SELECT * FROM group_members WHERE group_name = :group_name AND user_id = :user_id",
+        {"group_name": group_name, "user_id": user_id}
+    )
+    
+    if existing_member:
+        return {"error": "User is already a member of the group"}
+
+    # Add user to group
+    await database.execute(
+        """
+        INSERT INTO group_members (group_name, user_id)
+        VALUES (:group_name, :user_id, :role)
+        """,
+        {"group_name": group_name, "user_id": user_id}
+    )
+    
+    return {"success": f"User {user_id} added to group {group_name}"}
+
+
+async def login_user(username, password, database):
     """
     Authenticates a user and issues a JWT token, after verifying MFA.
     """
@@ -48,10 +73,6 @@ async def login_user(username, password, mfa_code, database):
     if not user["is_verified"]:
         return {"error": "Email not verified"}
 
-    # Verify MFA
-    if not verify_mfa(user["mfa_secret"], mfa_code):
-        return {"error": "Invalid MFA code"}
-
     token = jwt.encode(
         {
             "user_id": user["id"],
@@ -62,6 +83,24 @@ async def login_user(username, password, mfa_code, database):
     )
     return {"token": token}
 
+
+async def leave_group(user_id, group_name, database):
+    # Check if the user is in the group
+    member = await database.fetch_one(
+        "SELECT * FROM group_members WHERE group_name = :group_name AND user_id = :user_id",
+        {"group_name": group_name, "user_id": user_id}
+    )
+
+    if not member:
+        return {"error": "User is not a member of the group"}
+
+    # Remove the user from the group
+    await database.execute(
+        "DELETE FROM group_members WHERE group_name = :group_name AND user_id = :user_id",
+        {"group_name": group_name, "user_id": user_id}
+    )
+
+    return {"success": f"User {user_id} has left the group '{group_name}'"}
 
 
 async def register_user(username, email, password, database):
@@ -99,7 +138,6 @@ async def register_user(username, email, password, database):
     print(f"Verification token for {email}: {verification_token}")
     return {"success": "User registered successfully"}
 
-
 async def handle_client(reader, writer):
     """
     Function to handle clients
@@ -109,6 +147,7 @@ async def handle_client(reader, writer):
     clients[address] = writer
 
     database = await aiosqlite.connect("/chatroom.db")
+
     try:
         while True:
             data = await reader.readline()
@@ -140,11 +179,11 @@ async def handle_client(reader, writer):
             
             # Handle private message
             elif message.get('type') == 'private':
-                await send_private_message(message, address,database)
+                await h.send_private_message(message, address,database)
             
             # Handle group message
             elif message.get('type') == 'group':
-                await send_group_message(message, address,database)
+                await h.send_group_message(message, address,database)
             
             else:
                 writer.write("Unknown message type".encode())
@@ -157,77 +196,3 @@ async def handle_client(reader, writer):
     writer.close()
     await writer.wait_closed()
     print(f"Connection closed with {address}")
-
-async def send_private_message(message, sender_address,database):
-    """
-    Sends a private message to a specific target client.
-    """
-    target = message.get('target')
-    content = message.get('content')
-
-    for address, writer in clients.items():
-        if address[0] == target[0] and address[1] == target[1]:
-            try:
-                writer.write(f"Private message from {sender_address}: {content}\n".encode())
-                await writer.drain()
-                await store_message(sender=sender_address,recipient=address,content=content,db=database)
-                return
-            except ConnectionResetError:
-                print(f"Failed to deliver message to {address}")
-
-    sender_writer = clients[sender_address]
-    sender_writer.write(f"User {target} not found\n".encode())
-    await sender_writer.drain()
-
-async def send_group_message(message, sender_address, database):
-    """
-    Sends a message to a group from a group member
-    """
-    group_name = message.get('target')
-    content = message.get('content')
-    
-    if group_name not in groups:
-        sender_writer = clients[sender_address]
-        sender_writer.write(f"Group {group_name} does not exist or the sender has no permission to send".encode())
-        await sender_writer.drain()
-        return
-    
-    if sender_address not in groups[group_name]:
-        sender_writer = clients[sender_address]
-        sender_writer.write(f"Group {group_name} does not exist or the sender has no permission to send".encode())
-        await sender_writer.drain()
-        return
-
-    for address in groups[group_name]:
-        if address != sender_address:  # Don't send to the sender
-            try:
-                writer = clients[address]
-                writer.write(f"Group message from {sender_address}: {content}".encode())
-                await writer.drain()
-                await store_message(sender=sender_address,recipient=address,content=content,db=database)
-            except ConnectionResetError:
-                print(f"Failed to deliver message to {address}")
-
-async def store_message(sender, recipient, content, db):
-    try:
-        await db.execute(
-            "INSERT INTO messages (sender, recipient, content) VALUES (?, ?, ?)",
-            (sender, recipient, content)
-        )
-        await db.commit()
-        print("Message stored into database")
-    except Exception as e:
-        print(f"Error storing message: {e}")
-
-async def main():
-    """
-    Main function
-    """
-    server = await asyncio.start_server(handle_client, HOST, PORT)
-    print(f"Server started on {HOST}:{PORT}")
-    
-    async with server:
-        await server.serve_forever()
-
-if __name__ == '__main__':
-    asyncio.run(main())

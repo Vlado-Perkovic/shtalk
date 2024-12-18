@@ -58,12 +58,11 @@ async def add_user_to_group(group_name, user_id, database):
 
 
 async def login_user(username, password, database):
-    """
-    Authenticates a user and issues a JWT token, after verifying MFA.
-    """
+
     user = await database.fetch_one(
         "SELECT * FROM users WHERE username = :username", {"username": username}
     )
+
     if not user:
         return {"error": "Invalid username or password"}
 
@@ -85,7 +84,7 @@ async def login_user(username, password, database):
 
 
 async def leave_group(user_id, group_name, database):
-    # Check if the user is in the group
+
     member = await database.fetch_one(
         "SELECT * FROM group_members WHERE group_name = :group_name AND user_id = :user_id",
         {"group_name": group_name, "user_id": user_id}
@@ -94,7 +93,6 @@ async def leave_group(user_id, group_name, database):
     if not member:
         return {"error": "User is not a member of the group"}
 
-    # Remove the user from the group
     await database.execute(
         "DELETE FROM group_members WHERE group_name = :group_name AND user_id = :user_id",
         {"group_name": group_name, "user_id": user_id}
@@ -104,9 +102,6 @@ async def leave_group(user_id, group_name, database):
 
 
 async def register_user(username, email, password, database):
-    """
-    Registers a new user
-    """
     try:
         validate_email(email)
     except EmailNotValidError as e:
@@ -144,7 +139,7 @@ async def handle_client(reader, writer):
     """
     address = writer.get_extra_info('peername')
     print(f"New connection from {address}")
-    clients[address] = writer
+    
 
     database = await aiosqlite.connect("/chatroom.db")
 
@@ -167,8 +162,12 @@ async def handle_client(reader, writer):
             
             # Handle login
             if message.get('type') == 'login':
-                response = await login_user(message['username'], message['password'], database)
-                writer.write(json.dumps(response).encode())
+                try:
+                    response = await login_user(message['username'], message['password'], database)
+                    clients[message['username']] = writer
+                    writer.write(json.dumps(response).encode())
+                except:
+                    print("Login problem")
                 await writer.drain()
             
             # Handle registration

@@ -1,4 +1,5 @@
 from config import clients,groups
+import uuid
 
 
 async def read_all_clients(database) -> dict:
@@ -26,26 +27,45 @@ async def read_all_clients(database) -> dict:
         return {}
 
 
-async def send_private_message(message, sender_address,database):
+async def send_private_message(message, database):
     """
     Sends a private message to a specific target client.
     """
-    target = message.get('target')
-    content = message.get('content')
+    try:
+        recipient = message.get('recipient')
+        message = message.get('message')
+        timestamp = message.get('timestamp')
+        sender = message.get('sender')
+    except Exception as error:
+        print(f"{error}")
+    # Check if the target exists in clients
+    if recipient not in clients:
+        sender_writer = clients.get(sender)
+        if sender_writer:
+            error_msg = f"Error: User {recipient} not found.\n"
+            sender_writer.write(error_msg.encode())
+            await sender_writer.drain()
+        print(f"[Error] User {recipient} not found when {sender} tried to send a message.")
+        return
+    
+    # Send the message
+    target_writer = clients[recipient]
+    try:
+        msg_to_send = f"Private message from {sender}: {message}\n"
+        target_writer.write(msg_to_send.encode())
+        await target_writer.drain()
 
-    for address, writer in clients.items():
-        if address[0] == target[0] and address[1] == target[1]:
-            try:
-                writer.write(f"Private message from {sender_address}: {content}\n".encode())
-                await writer.drain()
-                await store_message(sender=sender_address,recipient=address,content=content,db=database)
-                return
-            except ConnectionResetError:
-                print(f"Failed to deliver message to {address}")
+        # Store message in database
+        try:
+            await store_message(sender=sender, recipient=recipient, content=message,timestamp=timestamp, db=database)
+        except Exception as db_error:
+            print(f"[Database Error] Failed to store message: {db_error}")
+        
+        print(f"Message sent from {sender} to {recipient}: {message}")
 
-    sender_writer = clients[sender_address]
-    sender_writer.write(f"User {target} not found\n".encode())
-    await sender_writer.drain()
+    except ConnectionResetError:
+        print(f"[Connection Error] Failed to deliver message to {recipient} - Connection lost.")
+
 
 async def send_group_message(message, sender_address, database):
     """
@@ -76,13 +96,59 @@ async def send_group_message(message, sender_address, database):
             except ConnectionResetError:
                 print(f"Failed to deliver message to {address}")
 
-async def store_message(sender, recipient, content, db):
+
+
+
+async def store_message(sender, recipient, content, timestamp, db):
     try:
+        sender_id = None
+        recipient_id = None
+
+        # Get sender ID
+        try:
+            async with db.execute("SELECT id FROM users WHERE username = ?", (sender,)) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    sender_id = row[0]
+                else:
+                    print(f"Sender {sender} not found")
+                    return
+        except Exception as e:
+            print(f"Error getting sender ID: {e}")
+            return
+
+        # Get recipient ID
+        try:
+            async with db.execute("SELECT id FROM users WHERE username = ?", (recipient,)) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    recipient_id = row[0]
+                else:
+                    print(f"Recipient {recipient} not found")
+                    return
+        except Exception as e:
+            print(f"Error getting recipient ID: {e}")
+            return
+
+        # Extract message details
+        ciphertext = content.get('ciphertext')
+        iv = content.get('iv')
+        signature = content.get('signature')
+
+        # Generate unique message ID
+        message_id = str(uuid.uuid4())
+
+        # Store the message in the database
         await db.execute(
-            "INSERT INTO messages (sender, recipient, content) VALUES (?, ?, ?)",
-            (sender, recipient, content)
+            """
+            INSERT INTO messages (message_id, sender_id, recipient_id, ciphertext, iv, signature, sent_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (message_id, sender_id, recipient_id, ciphertext, iv, signature, timestamp)
         )
         await db.commit()
-        print("Message stored into database")
+        print("Message stored successfully")
+
     except Exception as e:
         print(f"Error storing message: {e}")
+

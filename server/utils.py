@@ -40,7 +40,7 @@ async def send_private_message(message, database):
         print(f"{error}")
     # Check if the target exists in clients
     if recipient not in clients:
-        sender_writer = clients.get(sender)
+        sender_writer = clients[sender]
         if sender_writer:
             error_msg = f"Error: User {recipient} not found.\n"
             sender_writer.write(error_msg.encode())
@@ -57,7 +57,7 @@ async def send_private_message(message, database):
 
         # Store message in database
         try:
-            await store_message(sender=sender, recipient=recipient, content=message,timestamp=timestamp, db=database)
+            await store_message_single(sender=sender, recipient=recipient, content=message,timestamp=timestamp,group_name=None, db=database)
         except Exception as db_error:
             print(f"[Database Error] Failed to store message: {db_error}")
         
@@ -67,44 +67,36 @@ async def send_private_message(message, database):
         print(f"[Connection Error] Failed to deliver message to {recipient} - Connection lost.")
 
 
-async def send_group_message(message, sender_address, database):
-    """
-    Sends a message to a group from a group member
-    """
-    group_name = message.get('target')
-    content = message.get('content')
+async def send_group_message(message, database):
+    try:
+        content = message.get('message')
+        timestamp = message.get('timestamp')
+        sender = message.get('sender')
+        group_name = message.get('group')
+    except Exception as error:
+        print(f"{error}")
     
+    groups = await get_groups(database)
+
     if group_name not in groups:
-        sender_writer = clients[sender_address]
+        sender_writer = clients[sender]
         sender_writer.write(f"Group {group_name} does not exist or the sender has no permission to send".encode())
         await sender_writer.drain()
         return
     
-    if sender_address not in groups[group_name]:
-        sender_writer = clients[sender_address]
-        sender_writer.write(f"Group {group_name} does not exist or the sender has no permission to send".encode())
-        await sender_writer.drain()
-        return
-
-    for address in groups[group_name]:
-        if address != sender_address:  # Don't send to the sender
-            try:
-                writer = clients[address]
-                writer.write(f"Group message from {sender_address}: {content}".encode())
-                await writer.drain()
-                await store_message(sender=sender_address,recipient=address,content=content,db=database)
-            except ConnectionResetError:
-                print(f"Failed to deliver message to {address}")
+    try:
+        await store_message_group(sender=sender, content=content, timestamp=timestamp, group_name=group_name, db=database)
+    except ConnectionResetError:
+        print(f"Failed to deliver messages")
 
 
 
 
-async def store_message(sender, recipient, content, timestamp, db):
+async def store_message_single(sender, recipient, content, timestamp, db):
+    
     try:
         sender_id = None
         recipient_id = None
-
-        # Get sender ID
         try:
             async with db.execute("SELECT id FROM users WHERE username = ?", (sender,)) as cursor:
                 row = await cursor.fetchone()
@@ -117,7 +109,6 @@ async def store_message(sender, recipient, content, timestamp, db):
             print(f"Error getting sender ID: {e}")
             return
 
-        # Get recipient ID
         try:
             async with db.execute("SELECT id FROM users WHERE username = ?", (recipient,)) as cursor:
                 row = await cursor.fetchone()
@@ -130,25 +121,91 @@ async def store_message(sender, recipient, content, timestamp, db):
             print(f"Error getting recipient ID: {e}")
             return
 
-        # Extract message details
         ciphertext = content.get('ciphertext')
         iv = content.get('iv')
         signature = content.get('signature')
 
-        # Generate unique message ID
         message_id = str(uuid.uuid4())
 
-        # Store the message in the database
         await db.execute(
-            """
-            INSERT INTO messages (message_id, sender_id, recipient_id, ciphertext, iv, signature, sent_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (message_id, sender_id, recipient_id, ciphertext, iv, signature, timestamp)
-        )
+                """
+                INSERT INTO messages (message_id, sender_id, recipient_id, ciphertext, iv, signature, sent_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (message_id, sender_id, recipient_id, ciphertext, iv, signature, timestamp)
+            )
         await db.commit()
         print("Message stored successfully")
 
     except Exception as e:
         print(f"Error storing message: {e}")
 
+
+
+async def store_message_group(sender, content, timestamp, group_name, db):
+    
+    try:
+        sender_id = None
+        try:
+            async with db.execute("SELECT id FROM users WHERE username = ?", (sender,)) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    sender_id = row[0]
+                else:
+                    print(f"Sender {sender} not found")
+                    return
+        except Exception as e:
+            print(f"Error getting sender ID: {e}")
+            return
+
+        members = await get_users_in_group(group_name, db)
+
+        if sender_id not in members:
+            return
+        
+        ciphertext = content.get('ciphertext')
+        iv = content.get('iv')
+        signature = content.get('signature')
+        
+        for recipient_id in members:
+            message_id = str(uuid.uuid4())
+            await db.execute(
+                    """
+                    INSERT INTO messages (message_id, sender_id, recipient_id,group_name,ciphertext, iv, signature, sent_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (message_id, sender_id, recipient_id, group_name, ciphertext, iv, signature, timestamp)
+                )
+        await db.commit()
+        print("Message stored successfully")
+
+    except Exception as e:
+        print(f"Error storing message: {e}")
+
+
+async def get_users_in_group(group_name, database):
+    
+    members = []
+    
+    try:
+        async with database.execute("SELECT user_id FROM group_members WHERE group_name = ?", (group_name)) as cursor:
+            async for row in cursor:
+                members.append(row)
+    except Exception as e:
+            print(f"Error getting recipient ID: {e}")
+            return
+    
+    return members
+
+
+async def get_groups(database):
+    groups = []
+    try:
+        async with database.execute("SELECT id FROM groups") as cursor:
+            async for row in cursor:
+                groups.append(row)
+    except Exception as e:
+            print(f"Error getting recipient ID: {e}")
+            return
+    
+    return groups

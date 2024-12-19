@@ -6,7 +6,7 @@ from email_validator import validate_email, EmailNotValidError
 import jwt
 from datetime import datetime, timedelta
 from config import clients, JWT_SECRET
-import handlers as h
+import utils
 
 # Add your functions here from the original script
 
@@ -30,7 +30,7 @@ async def create_group(user_id, group_name, description, database):
     )
 
     # Add the user as the first member (admin) of the group
-    await add_user_to_group(group_name, user_id,database)
+    await add_user_to_group(group_name, user_id, database)
 
     return {"success": f"Group '{group_name}' created"}
 
@@ -51,7 +51,7 @@ async def add_user_to_group(group_name, user_id, database):
         INSERT INTO group_members (group_name, user_id)
         VALUES (:group_name, :user_id, :role)
         """,
-        {"group_name": group_name, "user_id": user_id}
+        {"group_name": group_name, "user_id": user_id, "role": 'member'}
     )
     
     return {"success": f"User {user_id} added to group {group_name}"}
@@ -127,11 +127,15 @@ async def register_user(username, email, password, database):
             "email": email,
             "password_hash": password_hash.decode(),
             "verification_token": verification_token,
+            "is_verified": 1
         }
     )
+    #Check what to do with is_verified and verification token- if we have time
 
     print(f"Verification token for {email}: {verification_token}")
     return {"success": "User registered successfully"}
+
+
 
 async def handle_client(reader, writer):
     """
@@ -142,7 +146,7 @@ async def handle_client(reader, writer):
     
 
     database = await aiosqlite.connect("/chatroom.db")
-
+    loggedIn = False
     try:
         while True:
             data = await reader.readline()
@@ -166,6 +170,8 @@ async def handle_client(reader, writer):
                     response = await login_user(message['username'], message['password'], database)
                     clients[message['username']] = writer
                     writer.write(json.dumps(response).encode())
+                    if 'token' in response.keys():
+                        loggedIn = True
                 except:
                     print("Login problem")
                 await writer.drain()
@@ -177,13 +183,13 @@ async def handle_client(reader, writer):
                 await writer.drain()
             
             # Handle private message
-            elif message.get('type') == 'private':
-                await h.send_private_message(message, address,database)
+            elif message.get('type') == 'private' and loggedIn:
+                await utils.send_private_message(message, address,database)
             
             # Handle group message
-            elif message.get('type') == 'group':
-                await h.send_group_message(message, address,database)
-            
+            elif message.get('type') == 'group' and loggedIn:
+                await utils.send_group_message(message, address,database)
+            #Dodati u handleru za dodavanje grupe/brisanje iz grupe ljudi/dodavanje ljudi
             else:
                 writer.write("Unknown message type".encode())
                 await writer.drain()
@@ -195,3 +201,30 @@ async def handle_client(reader, writer):
     writer.close()
     await writer.wait_closed()
     print(f"Connection closed with {address}")
+
+
+async def handle_history_request(message, writer, database):
+    """
+    Handle client requests to retrieve chat history.
+
+    :param message: Incoming message from client
+    :param writer: Stream writer to send the response back
+    :param database: Database connection
+    """
+    user_id = message.get('user_id')
+    target_id = message.get('target_id')
+    target_type = message.get('target_type')
+    limit = message.get('limit', 50)
+    offset = message.get('offset', 0)
+
+    if not user_id or not target_id or not target_type:
+        response = {"error": "Missing required parameters"}
+        writer.write(json.dumps(response).encode())
+        await writer.drain()
+        return
+
+    history = await utils.fetch_history(user_id, target_id, target_type, database, limit, offset)
+    response = {"history": history} if isinstance(history, list) else history
+
+    writer.write(json.dumps(response).encode())
+    await writer.drain()

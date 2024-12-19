@@ -31,7 +31,8 @@ class ChatClient:
         self.port = port
         self.client_socket = None
         self.is_connected = False
-        self.chat_history = []  # Stores chat messages
+        # self.chat_history = []  # Stores chat messages
+        self.chat_histories = {"general": []}  # Track chat histories
         self.current_group = "general"  # Default group
         self.connection_status = ConnectionStatus.DISCONNECTED  # Initial status
 
@@ -56,10 +57,12 @@ class ChatClient:
                 self.client_socket.close()
                 self.client_socket = None
 
-    def send_message(self, message: str, receiver: str = "general"):
+    def send_message(self, message: str, receiver: str = None):
         """
         Sends a message to the server.
         """
+        receiver = receiver or self.current_group
+
         if self.is_connected and self.client_socket:
             try:
                 message_json = {
@@ -71,6 +74,10 @@ class ChatClient:
                 }
                 self.client_socket.sendall(
                     json.dumps(message_json).encode("utf-8"))
+                if receiver not in self.chat_histories:
+                    # Initialize chat history if it doesn't exist
+                    self.chat_histories[receiver] = []
+                self.chat_histories[receiver].append(message_json)
             except Exception as e:
                 print(f"Error sending message: {e}")
 
@@ -104,15 +111,25 @@ class ChatClient:
                 # message_json = json.loads(data.decode("utf-8"))
                 message_json = data.decode("utf-8")
                 logging.debug(f'data: {message_json}')
+                receiver = message_json.get("receiver", "general")
+                if receiver not in self.chat_histories:
+                    self.chat_histories[receiver] = []
+                self.chat_histories[receiver].append(message_json)
                 return message_json
         except BlockingIOError:
             return None
+        except json.JSONDecodeError as e:
+            logging.debug(f'err decoding: {e}')
+
         except Exception as e:
             print(f"Error receiving message: {e}")
             self.is_connected = False
             logging.debug("Line 97")
             self.close()
             return None
+
+    def get_chat_history(self, chat_name: str):
+        return self.chat_histories.get(chat_name, [])
 
 
 class LoginScreen(Screen):
@@ -236,34 +253,73 @@ class ChatScreen(Screen):
 
     def compose(self):
         yield Header()
-        self.chat_history = ScrollView()
+        self.chat_list = Vertical(id="chat_list")
+        self.chat_history = ScrollView(id="chat_history")
         self.message_input = Input(
             placeholder="Type your message...", id="message_input")
         self.send_button = Button(label="Send", id="send_button")
-        yield self.chat_history
+
+        yield Horizontal(self.chat_list, self.chat_history, id="main_container")
         yield self.message_input
         yield self.send_button
 
+    async def on_mount(self):
+        self.update_chat_list()
+        self.load_chat_history(self.client.current_group)
+
+    def update_chat_list(self):
+        self.chat_list.remove_children()
+        for chat in self.client.chat_histories.keys():
+            button = Button(label=chat, id=f"chat_{chat}")
+            self.chat_list.mount(button)
+
+    def load_chat_history(self, chat_name: str):
+        self.chat_history.remove_children()
+        self.client.current_group = chat_name
+        messages = self.client.get_chat_history(chat_name)
+        for message in messages:
+            logging.debug(f'MESSAGE -> {message}')
+            logging.debug(f'{message["sender"]}, {message["sender"]}, {
+                          message["content"]}, {False})')
+            asyncio.create_task(self.add_message(
+                message["sender"], message["sender"], message["content"], False))
+
     async def on_button_pressed(self, button: Button):
-        if button.button.id == "send_button":
+        if button.button.id.startswith("chat_"):
+            chat_name = button.button.id.replace("chat_", "")
+            logging.debug(f'chat name is {chat_name}')
+            self.load_chat_history(chat_name)
+        elif button.button.id == "send_button":
             message = self.message_input.value.strip()
             if message:
-                self.client.send_message(message)
-                await self.add_message("You", message, False)
+                self.client.send_message(message, self.client.current_group)
+                await self.add_message("You", self.client.current_group, message, False)
                 self.message_input.value = ""
+
+    async def add_message(self, sender: str, receiver: str, message: str, is_system: bool):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        formatted_message = f"[{timestamp}] {sender}: {
+            message}" if not is_system else message
+        # if receiver not in self.client.chat_histories.keys():
+        #
+        #     self.client.chat_histories[receiver] = []
+        # self.client.chat_histories[receiver].append(formatted_message)
+        logging.debug(f'FORMATTED ---> {formatted_message}')
+
+        await self.chat_history.mount(Static(formatted_message))
 
     # def action_send_message(self):
 
-    async def add_message(self, sender: str, message: str, is_system: bool):
-        """
-        Add a message to the chat history.
-        """
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        formatted_message = f"[{timestamp}] {sender}: {
-            message}" if not is_system else f"{message}"
-        self.client.chat_history.append(formatted_message)
-
-        await self.chat_history.mount(Static(formatted_message))
+    # async def add_message(self, sender: str, message: str, is_system: bool):
+    #     """
+    #     Add a message to the chat history.
+    #     """
+    #     timestamp = datetime.now().strftime("%H:%M:%S")
+    #     formatted_message = f"[{timestamp}] {sender}: {
+    #         message}" if not is_system else f"{message}"
+    #     self.client.chat_history.append(formatted_message)
+    #
+    #     await self.chat_history.mount(Static(formatted_message))
 
 
 class ChatApp(App):
@@ -293,7 +349,7 @@ class ChatApp(App):
         """
         screen = self.screen
         if isinstance(screen, ChatScreen):
-            await screen.add_message(None, "Initializing connection...", True)
+            await screen.add_message(None, None, "Initializing connection...", True)
 
         await asyncio.sleep(0.1)  # Ensure TUI has time to render initially
 
@@ -310,7 +366,7 @@ class ChatApp(App):
                     await screen.add_message(None, f"Connection error: {e}", True)
 
             if isinstance(screen, ChatScreen):
-                await screen.add_message(None, "Trying to connect...", True)
+                await screen.add_message(None, None, "Trying to connect...", True)
             await asyncio.sleep(retry_interval)
 
     async def receive_messages(self):
@@ -334,7 +390,7 @@ class ChatApp(App):
         Handles the case when the server disconnects.
         """
         if isinstance(self.screen, ChatScreen):
-            await self.screen.add_message(None, "Server disconnected. Trying to reconnect...", True)
+            await self.screen.add_message(None, None, "Server disconnected. Trying to reconnect...", True)
         logging.debug("Server disconnected. Trying to reconnect...")
         self.client.close()
         await self.attempt_connection()
@@ -379,7 +435,7 @@ class ChatApp(App):
                 self.client.send_message(message)
                 # await self.screen.add_message("You", message, False)
                 asyncio.create_task(
-                    self.screen.add_message("You", message, False))
+                    self.screen.add_message(self.screen.client.current_group, "You", message, False))
                 self.screen.message_input.value = ""
 
     async def add_message(self, sender: str, message: str, is_system: bool):

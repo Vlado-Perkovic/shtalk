@@ -33,3 +33,20 @@ Button {
     height: auto;
     color: #FF0000;
 }
+
+#main_container {
+    display: block;
+    width: 100%;
+    height: 70%;
+}
+
+#chat_list {
+    width: 20%;
+    height: 100%;
+    overflow: auto;
+}
+#chat_history {
+    width: 80%;
+    height: 100%;
+    overflow: auto;
+}

@@ -172,7 +172,7 @@ async def store_message_group(sender, content, timestamp, group_name, db):
             await db.execute(
                     """
                     INSERT INTO messages (message_id, sender_id, recipient_id,group_name,ciphertext, iv, signature, sent_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?,?)
                     """,
                     (message_id, sender_id, recipient_id, group_name, ciphertext, iv, signature, timestamp)
                 )
@@ -184,18 +184,19 @@ async def store_message_group(sender, content, timestamp, group_name, db):
 
 
 async def get_users_in_group(group_name, database):
-    
     members = []
     
     try:
-        async with database.execute("SELECT user_id FROM group_members WHERE group_name = ?", (group_name)) as cursor:
+        # Pass group_name as a tuple with one element
+        async with database.execute("SELECT user_id FROM group_members WHERE group_name = ?", (group_name,)) as cursor:
             async for row in cursor:
-                members.append(row)
+                members.append(row[0])
     except Exception as e:
-            print(f"Error getting recipient ID: {e}")
-            return
+        print(f"Error getting recipient ID: {e}")
+        return
     
     return members
+
 
 
 async def get_groups(database):
@@ -209,3 +210,59 @@ async def get_groups(database):
             return
     
     return groups
+
+
+
+async def fetch_history(user_id, target, target_type, database, limit=50, offset=0):
+    """
+    Fetch chat history between a user and a target (either another user or a group).
+
+    :param user_id: ID of the requesting user
+    :param target_id: ID of the target user or group
+    :param target_type: 'private' or 'group'
+    :param database: Database connection
+    :param limit: Maximum number of messages to return
+    :param offset: Number of messages to skip (for pagination)
+    :return: List of messages or an error message
+    """
+    messages = []
+    query = ""
+    params = {}
+
+    try:
+        if target_type == 'private':
+            query = (
+                "SELECT sender_id, recipient_id, ciphertext, iv, signature, sent_at "
+                "FROM messages WHERE (sender_id = :user_id AND recipient_id = :target_id) "
+                "OR (sender_id = :target_id AND recipient_id = :user_id) "
+                "ORDER BY sent_at DESC LIMIT :limit OFFSET :offset"
+            )
+            params = {
+                "user_id": user_id, "target_id": target, "limit": limit, "offset": offset
+            }
+
+        elif target_type == 'group':
+            query = (
+                "SELECT sender_id, group_name, ciphertext, iv, signature, sent_at "
+                "FROM messages WHERE group_name = :target_id "
+                "ORDER BY sent_at DESC LIMIT :limit OFFSET :offset"
+            )
+            params = {
+                "target_id": target, "limit": limit, "offset": offset
+            }
+
+        async with database.execute(query, params) as cursor:
+            async for row in cursor:
+                messages.append({
+                    "sender_id": row[0],
+                    "recipient_id": row[1] if target_type == 'private' else None,
+                    "ciphertext": row[2],
+                    "iv": row[3],
+                    "signature": row[4],
+                    "sent_at": row[5]
+                })
+
+        return messages
+
+    except Exception as e:
+        return {"error": f"Failed to fetch chat history: {str(e)}"}

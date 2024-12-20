@@ -39,6 +39,16 @@ async def handle_client(reader, writer):
                     clients[message['username']] = writer
                     publicKeys[message['username']] = message['public_key']
                 await writer.drain()
+            elif message.get('type') == 'log_out':
+                response = {
+                    'type':'success',
+                    'message' : 'Logged out successfully'
+                }
+                writer.write(json.dumps(response).encode())
+                loggedIn = False
+                clients.pop('username')
+                publicKeys.pop('username')
+                await writer.drain()
             elif message.get('type') == 'register':
                 response = await utils.register_user(message['username'], message['email'], message['password'], database)
                 writer.write(json.dumps(response).encode())

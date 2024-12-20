@@ -35,18 +35,39 @@ Button {
 }
 
 #main_container {
-    display: block;
     width: 100%;
-    height: 70%;
+    height: 80%;
 }
 
 #chat_list {
-    width: 20%;
+    height: auto;
+    overflow: auto;
+}
+#side_panel {
+    width: 30%;
     height: 100%;
     overflow: auto;
 }
+#side_panel_buttons {
+    width: auto;
+    height: auto;
+    overflow: auto;
+}
+
 #chat_history {
-    width: 80%;
+    width: 60%;
     height: 100%;
     overflow: auto;
 }
+#message_input {
+    width: 50%;
+    height: auto;
+    overflow: auto;
+}
+
+#send_button {
+    width: 20%;
+    height: 50%;
+    overflow: auto;
+}
+

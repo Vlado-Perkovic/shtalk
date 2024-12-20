@@ -398,9 +398,10 @@ async def add_user_to_group(group_name, username, database):
     return {"type":"success", "message": f"User {username} added to group {group_name}"}
 
 async def login_user(username, password, database):
+
     async with database.execute(
         "SELECT * FROM users WHERE username = ?", 
-        (username,)  # Make sure to pass a tuple with one element
+        (username,)
     ) as cursor:
         user = await cursor.fetchone()
         print(user)

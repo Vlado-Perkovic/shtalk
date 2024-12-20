@@ -1,6 +1,6 @@
 import json
 import aiosqlite
-from config import clients
+from config import clients,publicKeys
 import utils
 
 
@@ -32,25 +32,23 @@ async def handle_client(reader, writer):
             print(f"Received from {address}: {message}")
             
             if message.get('type') == 'login':
-                try:
-                    response = await utils.login_user(message['username'], message['password'], database)
+                response = await utils.login_user(message['username'], message['password'], database)
+                writer.write(json.dumps(response).encode())
+                if response['type'] == 'success':
+                    loggedIn = True
                     clients[message['username']] = writer
-                    writer.write(json.dumps(response).encode())
-                    if 'token' in response.keys():
-                        loggedIn = True
-                except:
-                    print("Login problem")
+                    publicKeys[message['username']] = message['public_key']
                 await writer.drain()
             elif message.get('type') == 'register':
                 response = await utils.register_user(message['username'], message['email'], message['password'], database)
                 writer.write(json.dumps(response).encode())
                 await writer.drain()
             elif message.get('type') == 'private' and loggedIn:
-                response =  await utils.send_private_message(message, address,database)
+                response =  await utils.send_private_message(message,database)
                 writer.write(json.dumps(response).encode())
                 await writer.drain()
             elif message.get('type') == 'group' and loggedIn:
-                response = await utils.send_group_message(message, address,database)
+                response = await utils.send_group_message(message,database)
                 writer.write(json.dumps(response).encode())
                 await writer.drain()
             elif message.get('type') == 'new_group' and loggedIn:
@@ -63,6 +61,10 @@ async def handle_client(reader, writer):
                 await writer.drain()
             elif message.get('type') == 'history' and loggedIn:
                 response = await handle_history_request(message,writer,database)
+                writer.write(json.dumps(response).encode())
+                await writer.drain()
+            elif message.get('type') == 'get_keys' and loggedIn:
+                response = await utils.return_public_key(message['usernames'])
                 writer.write(json.dumps(response).encode())
                 await writer.drain()
             else:

@@ -1,4 +1,4 @@
-from config import clients
+from config import clients, publicKeys
 import uuid
 import json
 import secrets
@@ -56,7 +56,13 @@ async def send_private_message(message, database):
                 }
     
     # Send the message
-    target_writer = clients[recipient]
+    try:
+        target_writer = clients[recipient]
+    except Exception as e:
+        return {
+                "type": "error",
+                "message": f"Failed to deliver message to {recipient}. - Connection lost"
+            }
     try:
         # Create JSON message
         msg_to_send = json.dumps({
@@ -125,31 +131,46 @@ async def send_group_message(message, database):
         if sender_writer:
             print(f"[Error] Group {group_name} not found or sender {sender} lacks permissions.")
             return {
-                "type": "ERROR",
+                "type": "error",
                 "message": f"Group {group_name} does not exist or sender has no permission."
             }
     
     # Retrieve users in the group
-    user_group = await get_users_in_group(group_name, database)
+    user_group_id = await get_users_in_group(group_name, database)
 
+
+    user_group = []
+
+    for user_id in user_group_id:
+        try:
+            async with database.execute("SELECT username FROM users WHERE user_id = ?", (user_id,)) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                     user_group.append(row[0])
+                else:
+                    print(f"User {user_id} not found")
+        except Exception as e:
+            print(f"Error getting sender ID: {e}")
+            return
 
     if sender not in user_group:
         sender_writer = clients.get(sender)
         if sender_writer:
             print(f"[Error] Group {group_name} not found or sender {sender} lacks permissions.")
             return {
-                "type": "ERROR",
+                "type": "error",
                 "message": f"Group {group_name} does not exist or sender has no permission."
             }
 
     # Send message to all users in the group
     for user in user_group:
-        if user in clients.keys:
+        
+        if user != sender and user in clients.keys():
             target_writer = clients[user]
             try:
                 # Create JSON message
                 msg_to_send = json.dumps({
-                    "type": "GROUP",
+                    "type": "group",
                     "sender": sender,
                     "group_name": group_name,
                     "timestamp": timestamp,
@@ -163,7 +184,7 @@ async def send_group_message(message, database):
 
                 target_writer.write(msg_to_send.encode())
                 await target_writer.drain()
-
+                print(f"Sent to {target_writer}")
             except ConnectionResetError:
                 print(f"[Connection Error] Failed to deliver message to {user} - User offline.")
     
@@ -193,7 +214,7 @@ async def store_message_single(sender, recipient, content, timestamp, db):
         sender_id = None
         recipient_id = None
         try:
-            async with db.execute("SELECT id FROM users WHERE username = ?", (sender,)) as cursor:
+            async with db.execute("SELECT user_id FROM users WHERE username = ?", (sender,)) as cursor:
                 row = await cursor.fetchone()
                 if row:
                     sender_id = row[0]
@@ -205,7 +226,7 @@ async def store_message_single(sender, recipient, content, timestamp, db):
             return
 
         try:
-            async with db.execute("SELECT id FROM users WHERE username = ?", (recipient,)) as cursor:
+            async with db.execute("SELECT user_id FROM users WHERE username = ?", (recipient,)) as cursor:
                 row = await cursor.fetchone()
                 if row:
                     recipient_id = row[0]
@@ -235,14 +256,27 @@ async def store_message_single(sender, recipient, content, timestamp, db):
     except Exception as e:
         print(f"Error storing message: {e}")
 
-
+async def return_public_key(usernames):
+    keys = dict()
+    for username in usernames:
+        if username in publicKeys.keys():
+            keys[username] = publicKeys[username]
+    if len(keys.keys()) == 0:
+        return {
+            "type" : "error",
+            "message" : "No keys found for given usernames"
+        }
+    return {
+        "type" : "success",
+        "keys" : keys
+    }
 
 async def store_message_group(sender, content, timestamp, group_name, db):
     
     try:
         sender_id = None
         try:
-            async with db.execute("SELECT id FROM users WHERE username = ?", (sender,)) as cursor:
+            async with db.execute("SELECT user_id FROM users WHERE username = ?", (sender,)) as cursor:
                 row = await cursor.fetchone()
                 if row:
                     sender_id = row[0]
@@ -271,7 +305,7 @@ async def store_message_group(sender, content, timestamp, group_name, db):
                     """,
                     (message_id, sender_id, recipient_id, group_name, ciphertext, iv, signature, timestamp)
                 )
-        await db.commit()
+        await db.commit()   
         print("Message stored successfully")
 
     except Exception as e:
@@ -283,7 +317,7 @@ async def get_users_in_group(group_name, database):
     
     try:
         # Pass group_name as a tuple with one element
-        async with database.execute("SELECT username FROM group_members WHERE group_name = ?", (group_name,)) as cursor:
+        async with database.execute("SELECT user_id FROM group_members WHERE group_name = ?", (group_name,)) as cursor:
             async for row in cursor:
                 members.append(row[0])
     except Exception as e:
@@ -295,13 +329,25 @@ async def get_users_in_group(group_name, database):
 
 async def create_group(username, group_name, description, database):
     # Check if the group already exists
-    existing_group = await database.fetch_one(
+    async with database.execute(
         "SELECT * FROM groups WHERE group_name = :group_name",
         {"group_name": group_name}
-    )
+    ) as cursor:
+        existing_group = await cursor.fetchone()
 
     if existing_group:
-        return {"error": "Group already exists"}
+        return {"type":"error",
+                "message": "Group already exists"}
+    
+    async with database.execute(
+        "SELECT user_id FROM users WHERE username = :username",
+        {"username": username}
+    ) as cursor:
+        user_id = await cursor.fetchone()
+    
+    if not user_id:
+        return {"type":"error",
+                "message": "Username doesn't exist"}
 
     # Insert the group into the database
     await database.execute(
@@ -311,80 +357,73 @@ async def create_group(username, group_name, description, database):
         """,
         {"group_name": group_name, "description": description}
     )
-
-    user_id = await database.fetch_one(
-        "SELECT user_id FROM groups WHERE username = :username",
-        {"username": username}
-    )
-
+    await database.commit()
     # Add the user as the first member (admin) of the group
-    await add_user_to_group(group_name, user_id, database)
+    await add_user_to_group(group_name, username, database)
 
     return {"type":"success",
             "message": f"Group '{group_name}' created"}
 
 async def add_user_to_group(group_name, username, database):
-
-    user_id = await database.fetch_one(
-        "SELECT user_id FROM groups WHERE username = :username",
+    async with database.execute(
+        "SELECT user_id FROM users WHERE username = :username",
         {"username": username}
-    )
+    ) as cursor:
+        user_id_row = await cursor.fetchone()
+    
+    if not user_id_row:
+        return {"type":"error", "message": "Username doesn't exist"}
 
-    if not user_id:
-        return {"type":"error",
-                "message": "Username doesn't exist"}
-
-    # Check if the user is already in the group
-    existing_member = await database.fetch_one(
+    user_id = user_id_row[0]  # Access the first element in the tuple
+    
+    async with database.execute(
         "SELECT * FROM group_members WHERE group_name = :group_name AND user_id = :user_id",
         {"group_name": group_name, "user_id": user_id}
-    )
+    ) as cursor:
+        existing_member = await cursor.fetchone()
     
     if existing_member:
-        return {"type":"error",
-                "message": "User is already a member of the group"}
+        return {"type":"error", "message": "User is already a member of the group"}
 
     # Add user to group
     await database.execute(
         """
-        INSERT INTO group_members (group_name, user_id)
+        INSERT INTO group_members (group_name, user_id, role)
         VALUES (:group_name, :user_id, :role)
         """,
         {"group_name": group_name, "user_id": user_id, "role": 'member'}
     )
+    await database.commit()
     
-    return {"type":"success",
-            "message": f"User {user_id} added to group {group_name}"}
+    return {"type":"success", "message": f"User {username} added to group {group_name}"}
 
 async def login_user(username, password, database):
-
-    user = await database.fetch_one(
-        "SELECT * FROM users WHERE username = :username", {"username": username}
-    )
+    async with database.execute(
+        "SELECT * FROM users WHERE username = ?", 
+        (username,)  # Make sure to pass a tuple with one element
+    ) as cursor:
+        user = await cursor.fetchone()
+        print(user)
 
     if not user:
-        return {"type":"error",
-                "message": "Invalid username or password"}
+        return {"type":"error", "message": "Invalid username or password"}
 
-    if password.encode() != user["password_hash"].encode():
-        return {"type":"error",
-                "message": "Invalid username or password"}
+    if password != user[3]:
+        return {"type":"error", "message": "Invalid username or password"}
 
-    if not user["is_verified"]:
-        return {"type":"error",
-                "message": "Email not verified"}
+    if user[5] == 0:
+        return {"type":"error", "message": "Email not verified"}
 
     token = jwt.encode(
         {
-            "user_id": user["id"],
+            "user_id": user[6],
             "exp": datetime.utcnow() + timedelta(hours=1)
         },
         JWT_SECRET,
         algorithm="HS256"
     )
-    
-    return {"type":"success",
-            "message": f"User {username} logged in"}
+
+    return {"type":"success", "message": f"User {username} logged in", "token": token}
 
 async def leave_group(user_id, group_name, database):
 
@@ -402,6 +441,7 @@ async def leave_group(user_id, group_name, database):
         "DELETE FROM group_members WHERE group_name = :group_name AND user_id = :user_id",
         {"group_name": group_name, "user_id": user_id}
     )
+    await database.commit()
 
     return {"type":"success",
             "message":f"User {user_id} has left the group '{group_name}'"}
@@ -424,37 +464,35 @@ async def register_user(username, email, password, database):
     try:
         validate_email(email)
     except EmailNotValidError as e:
-        return {"type":"error",
-                "message": f"Invalid email: {str(e)}"}
+        return {"type": "error", "message": f"Invalid email: {str(e)}"}
 
-    user_exists = await database.fetch_one(
-        "SELECT * FROM users WHERE username = :username OR email = :email",
-        {"username": username, "email": email}
-    )
+    # Check if the user already exists
+    async with database.execute(
+        "SELECT * FROM users WHERE username = ? OR email = ?", 
+        (username, email)
+    ) as cursor:
+        user_exists = await cursor.fetchone()
+
     if user_exists:
-        return {"type":"error",
-                "message": "Username or email already exists"}
+        return {"type": "error", "message": "Username or email already exists"}
 
     verification_token = secrets.token_urlsafe(16)
 
+    # Insert the new user
     await database.execute(
         """
-        INSERT INTO users (username, email, password_hash, verification_token)
-        VALUES (:username, :email, :password_hash, :verification_token)
+        INSERT INTO users (username, email, password_hash, verification_token, is_verified)
+        VALUES (?, ?, ?, ?, ?)
         """,
-        {
-            "username": username,
-            "email": email,
-            "password_hash": password.decode(),
-            "verification_token": verification_token,
-            "is_verified": 1
-        }
+        (username, email, password, verification_token, 1)
     )
-    #Check what to do with is_verified and verification token- if we have time
+
+    await database.commit()
+
+    # Debugging information
     print(f"Verification token for {email}: {verification_token}")
 
-    return {"type":"success",
-            "message":"User registered successfully"}
+    return {"type": "success", "message": "User registered successfully"}
 
 
 async def fetch_history(user_id, target, target_type, database, limit=50, offset=0):

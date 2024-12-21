@@ -488,12 +488,18 @@ class ChatScreen(Screen):
             logging.debug("new_chat_button pressed")
 
             # Show an input field to type the username
+            # await self.left_panel.remove_children()
+            self.buttons_panel.visible = False
+            self.chat_list.visible = False
             self.new_chat_input = Input(
                 placeholder="Enter username...", id="new_chat_input")
             self.confirm_new_chat_button = Button(
                 label="Start Chat", id="confirm_new_chat_button")
+            self.cancel_new_chat_button = Button(
+                label="Cancel", id="cancel_new_chat_button")
             self.left_panel.mount(self.new_chat_input)
-            self.left_panel.mount(self.confirm_new_chat_button)
+            self.left_panel.mount(Horizontal(
+                self.confirm_new_chat_button, self.cancel_new_chat_button))
 
         elif button.button.id == "confirm_new_chat_button":
             username = self.new_chat_input.value.strip()
@@ -511,12 +517,19 @@ class ChatScreen(Screen):
             # Remove the input field and button after confirmation
                 self.new_chat_input.remove()
                 self.confirm_new_chat_button.remove()
+                self.cancel_new_chat_button.remove()
+                self.buttons_panel.visible = True
+                self.chat_list.visible = True
+
                 # self.chat_list_container.remove(self.new_chat_input)
                 # self.chat_list_container.remove(
                 #     self.confirm_new_chat_button)
 
         elif button.button.id == "new_group_button":
             logging.debug("new_group_button pressed")
+            self.buttons_panel.visible = False
+            self.chat_list.visible = False
+
             # Open inputs for group chat creation
             self.group_name_input = Input(
                 placeholder="Enter group name...", id="group_name_input")
@@ -524,10 +537,13 @@ class ChatScreen(Screen):
                 placeholder="Enter usernames (comma-separated)...", id="group_members_input")
             self.confirm_new_group_button = Button(
                 label="Create Group", id="confirm_new_group_button")
+            self.cancel_new_group_button = Button(
+                label="Cancel", id="cancel_new_group_button")
 
             self.left_panel.mount(self.group_name_input)
             self.left_panel.mount(self.group_members_input)
-            self.left_panel.mount(self.confirm_new_group_button)
+            self.left_panel.mount(Horizontal(
+                self.confirm_new_group_button, self.cancel_new_group_button))
 
         elif button.button.id == "confirm_new_group_button":
             # Handle group chat creation
@@ -537,13 +553,41 @@ class ChatScreen(Screen):
             if group_name and members:
                 member_list = [m.strip() for m in members.split(",")]
                 new_group = self.app.handle_create_group(
-                    group_name, members)
+                    group_name, member_list)
                 # if new_group:
                 await self.update_chat_list()
 
             self.group_name_input.remove()
             self.group_members_input.remove()
             self.confirm_new_group_button.remove()
+            self.cancel_new_group_button.remove()
+            self.buttons_panel.visible = True
+            self.chat_list.visible = True
+
+        elif button.button.id == "cancel_new_group_button":
+            if self.group_name_input:
+                self.group_name_input.remove()
+            if self.group_members_input:
+                self.group_members_input.remove()
+            if self.confirm_new_group_button:
+                self.confirm_new_group_button.remove()
+            if self.cancel_new_group_button:
+                self.cancel_new_group_button.remove()
+
+            self.buttons_panel.visible = True
+            self.chat_list.visible = True
+
+        elif button.button.id == "cancel_new_chat_button":
+
+            if self.new_chat_input:
+                self.new_chat_input.remove()
+            if self.confirm_new_chat_button:
+                self.confirm_new_chat_button.remove()
+            if self.cancel_new_chat_button:
+                self.cancel_new_chat_button.remove()
+
+            self.buttons_panel.visible = True
+            self.chat_list.visible = True
 
     async def add_message(self, message_json: json):
         try:

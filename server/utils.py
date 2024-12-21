@@ -47,6 +47,10 @@ async def send_private_message(message, database):
                 "message": "Parsing error."
                 }
  
+    if sender not in clients:
+        return {"type": "error",
+                "message": f"User {sender} not found."
+                }
     if recipient not in clients:
         sender_writer = clients.get(sender)
         if sender_writer:
@@ -84,6 +88,7 @@ async def send_private_message(message, database):
                 recipient=recipient,
                 content=message_content,
                 timestamp=timestamp,
+                group_name=None,
                 db=database
             )
         except Exception as db_error:
@@ -353,12 +358,17 @@ async def create_group(usernames, group_name, description, database):
         {"group_name": group_name, "description": description}
     )
     await database.commit()
+    added = []
     for username in usernames:
         response = await add_user_to_group(group_name, username, database)
         print(response)
+        if response.get('type') == 'error':
+            continue
+        added.append(username)
 
     return {"type":"success",
-            "message": f"Group '{group_name}' created"}
+            "message": f"Group '{group_name}' created",
+            "users" : added}
 
 
 async def add_user_to_group(group_name, username, database):
@@ -419,7 +429,7 @@ async def login_user(username, password, database):
         JWT_SECRET,
         algorithm="HS256"
     )
-
+    print("EO ME")
     return {"type":"success", "message": f"User {username} logged in", "token": token}
 
 async def leave_group(user_id, group_name, database):
@@ -462,16 +472,13 @@ async def register_user(username, email, password, database):
         validate_email(email)
     except EmailNotValidError as e:
         return {"type": "error", "message": f"Invalid email: {str(e)}"}
-
     async with database.execute(
         "SELECT * FROM users WHERE username = ? OR email = ?", 
         (username, email)
     ) as cursor:
         user_exists = await cursor.fetchone()
-
     if user_exists:
         return {"type": "error", "message": "Username or email already exists"}
-
     verification_token = secrets.token_urlsafe(16)
 
     await database.execute(
@@ -481,7 +488,6 @@ async def register_user(username, email, password, database):
         """,
         (username, email, password, verification_token, 1)
     )
-
     await database.commit()
 
     print(f"Verification token for {email}: {verification_token}")

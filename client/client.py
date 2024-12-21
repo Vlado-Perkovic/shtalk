@@ -74,7 +74,7 @@ class ChatClient:
         if self.is_connected and self.client_socket:
             try:
                 self.client_socket.sendall(
-                    json.dumps(message_json).encode()+ b'\n')
+                    json.dumps(message_json).encode() + b'\n')
                 recipient = message_json.get("recipient", "")
                 # if recipient not in self.chat_histories:
                 # Initialize chat history if it doesn't exist
@@ -92,19 +92,23 @@ class ChatClient:
 
                 # Send authentication request
                 self.client_socket.sendall(
-                    json.dumps(message_json).encode()+ b'\n')
+                    json.dumps(message_json).encode() + b'\n')
 
                 # Wait for server response
                 response_data = self.client_socket.recv(
-                    1024) 
-                logging.debug(response_data.decode()) # Adjust buffer size if needed
+                    1024)
+                # Adjust buffer size if needed
+                logging.debug(response_data.decode())
                 response_json = json.loads(response_data.decode())
                 logging.debug("zapeo")
                 # Reset the timeout to default (blocking mode)
                 self.client_socket.settimeout(None)
+                logging.debug("zapeo3")
 
+                b = response_json.get("type") == "success"
+                logging.debug("zapeo4")
                 # Check response for success or failure
-                if response_json.get("type") == "success":
+                if b:
                     return True
                 else:
                     return False
@@ -124,7 +128,7 @@ class ChatClient:
 
                 # Send authentication request
                 self.client_socket.sendall(
-                    json.dumps(message_json).encode()+ b'\n')
+                    json.dumps(message_json).encode() + b'\n')
 
                 # Wait for server response
                 logging.debug("zapeo")
@@ -160,7 +164,42 @@ class ChatClient:
 
                 # Send authentication request
                 self.client_socket.sendall(
-                    json.dumps(message_json).encode()+ b'\n')
+                    json.dumps(message_json).encode() + b'\n')
+
+                # Wait for server response
+                logging.debug("zapeo")
+                response_data = self.client_socket.recv(
+                    1024)  # Adjust buffer size if needed
+                response_json = json.loads(response_data.decode("utf-8"))
+
+                # Reset the timeout to default (blocking mode)
+                self.client_socket.settimeout(None)
+
+                # Check response for success or failure
+                if response_json.get("type") == "success":
+                    self.chat_histories[message_json.get("group_name")] = {"type": "group",
+                                                                           # "users": response_json.get("users"),
+                                                                           "content": []}
+                    [logging.debug(f'username: {u}')
+                     for u in self.chat_histories.keys()]
+                    return True
+                else:
+                    return False
+            except socket.timeout:
+                logging.debug("Creating new group timed out.")
+                return None  # Indicate a timeout occurred
+            except Exception as e:
+                logging.debug(f"Error during new group: {e}")
+
+    def add_to_group(self, message_json: {}, timeout: float = 5.0):
+        if self.is_connected and self.client_socket:
+            try:
+                # Set timeout for the socket
+                self.client_socket.settimeout(timeout)
+
+                # Send authentication request
+                self.client_socket.sendall(
+                    json.dumps(message_json).encode("utf-8"))
 
                 # Wait for server response
                 logging.debug("zapeo")
@@ -177,15 +216,10 @@ class ChatClient:
                 else:
                     return False
             except socket.timeout:
-                logging.debug("Authentication timed out.")
+                logging.debug("Adding members timed out.")
                 return None  # Indicate a timeout occurred
             except Exception as e:
-                logging.debug(f"Error during authentication: {e}")
-                return False
-
-        self.chat_histories[group_name] = {"type": "group",
-                                           "content": []}
-        [logging.debug(f'username: {u}') for u in self.chat_histories.keys()]
+                logging.debug(f"Error during new group: {e}")
 
     def close(self):
         """
@@ -500,7 +534,7 @@ class ChatScreen(Screen):
             if group_name and members:
                 member_list = [m.strip() for m in members.split(",")]
                 new_group = self.app.handle_create_group(
-                    group_name, members=member_list)
+                    group_name, members)
                 # if new_group:
                 await self.update_chat_list()
 
@@ -537,6 +571,7 @@ class ChatApp(App):
     def __init__(self, host: str, port: int, **kwargs):
         super().__init__(**kwargs)
         self.client = ChatClient(host, port)
+        self.username = ""
 
     async def on_load(self):
         self.install_screen(LoginScreen(self.client), name="login")
@@ -659,7 +694,7 @@ class ChatApp(App):
         else:
             await self.show_error("Could not connect to the server. Please try again later.")
 
-    async def handle_create_group(self, group_name: str):
+    async def handle_create_group(self, group_name: str, members):
         if not self.client.is_connected:
             await self.handle_disconnect()
 
@@ -667,11 +702,12 @@ class ChatApp(App):
             try:
                 new_group_payload = {
                     "type": "new_group",
-                    "username": "vlado",
+                    "usernames": members,
                     "group_name": group_name,
                     "description": ""
                 }
-                self.client.create_new_group(new_group_payload)
+                if self.client.create_new_group(new_group_payload):
+                    return True
 
             except Exception as e:
                 await self.show_error(f"Error during login: {str(e)}")
@@ -712,7 +748,7 @@ class ChatApp(App):
                     return
                 message_json = {
                     "type": chat_type,
-                    "sender": "vlado",
+                    "sender": self.username,
                     "recipient" if chat_type == "private" else "group_name": self.client.current_group,
                     "timestamp": datetime.now().isoformat(),
                     "message": {

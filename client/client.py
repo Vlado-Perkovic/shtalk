@@ -42,7 +42,9 @@ class ChatClient:
         self.is_connected = False
         # self.chat_history = []  # Stores chat messages
         self.chat_histories = {}  # Track chat histories
-        self.current_group = ""  # Default group
+        self.current_chat = ""  # Default group
+        self.all_groups = []
+        self.all_dms = []
         self.connection_status = ConnectionStatus.DISCONNECTED  # Initial status
 
     async def connect(self):
@@ -153,9 +155,8 @@ class ChatClient:
                 return False
 
     def create_new_chat(self, username):
-        self.chat_histories[username] = {"type": "private",
-                                         "content": []}
-        [logging.debug(f'username: {u}') for u in self.chat_histories.keys()]
+        self.chat_histories[username] = []
+        self.all_dms.append(username)
 
     def create_new_group(self, message_json: {}, timeout: float = 5.0):
         if self.is_connected and self.client_socket:
@@ -178,11 +179,7 @@ class ChatClient:
 
                 # Check response for success or failure
                 if response_json.get("type") == "success":
-                    self.chat_histories[message_json.get("group_name")] = {"type": "group",
-                                                                           # "users": response_json.get("users"),
-                                                                           "content": []}
-                    [logging.debug(f'username: {u}')
-                     for u in self.chat_histories.keys()]
+                    self.chat_histories[message_json.get("group_name")] = []
                     return True
                 else:
                     return False
@@ -250,11 +247,10 @@ class ChatClient:
             if data:
                 message = json.loads(data.decode("utf-8"))
                 logging.debug(f'data: {message}')
-                recipient = message.get("recipient", "general")
 
-                if recipient not in self.chat_histories:
-                    self.chat_histories[recipient] = []
-                self.chat_histories[recipient].append(message)
+                # if recipient not in self.chat_histories:
+                #     self.chat_histories[recipient] = []
+                # self.chat_histories[recipient].append(message)
                 return message
         except BlockingIOError:
             return None
@@ -268,7 +264,7 @@ class ChatClient:
             return None
 
     def get_chat_history(self, chat_name: str):
-        return self.chat_histories[chat_name].get("content", "")
+        return self.chat_histories[chat_name]
 
 
 class LoginScreen(Screen):
@@ -442,7 +438,8 @@ class ChatScreen(Screen):
 
     async def load_chat_history(self, chat_name: str):
         await self.chat_history.remove_children()
-        self.client.current_group = chat_name
+        [logging.debug(f'msg -> {u}')
+         for u in self.client.chat_histories[chat_name]]
         messages = self.client.get_chat_history(chat_name)
         for message in messages:
             logging.debug(f'MESSAGE -> {message}')
@@ -454,6 +451,10 @@ class ChatScreen(Screen):
             logging.debug("kruac button pressed")
             chat_name = button.button.id.replace("chat_", "")
             logging.debug(f'chat name is {chat_name}')
+            self.client.current_chat = chat_name
+
+            # self.client.chat_histories[chat_name] = []
+
             await self.load_chat_history(chat_name)
 
         elif button.button.id == "send_button":
@@ -461,7 +462,7 @@ class ChatScreen(Screen):
 
             message = self.message_input.value.strip()
             if message:
-                chat_type = self.client.chat_histories[self.client.current_group].get(
+                chat_type = self.client.chat_histories[self.client.current_chat].get(
                     "type", "")
                 if chat_type == "":
                     logging.debug("ujebo si ga brate")
@@ -469,7 +470,7 @@ class ChatScreen(Screen):
                 message_json = {
                     "type": chat_type,
                     "sender": "vlado",
-                    "recipient": self.client.current_group,
+                    "recipient": self.client.current_chat,
                     "timestamp": datetime.now().isoformat(),
                     "message": {
                         "ciphertext": message,
@@ -500,11 +501,12 @@ class ChatScreen(Screen):
                 # Send request to the server to create a new chat
                 self.client.create_new_chat(
                     username)  # Implement on the server
-                [logging.debug(f'u: {u}')
-                 for u in self.client.chat_histories.keys()]
+                # [logging.debug(f'u: {u}')
+                #  for u in self.client.chat_histories.keys()]
                 # if new_chat:  # Assume the server returns the new chat details
                 await self.update_chat_list()
                 logging.debug("koji kruac")
+                self.client.current_chat = username
 
             # Remove the input field and button after confirmation
                 self.new_chat_input.remove()
@@ -616,16 +618,48 @@ class ChatApp(App):
         Continuously listens for incoming messages from the server.
         """
         while self.client.is_connected:
-            logging.debug('AJMOO VAN')
 
             if isinstance(self.screen, ChatScreen):
-                logging.debug('AJMOO UNUTRA')
 
                 message = self.client.receive_messages()
                 if message:
                     # await self.screen.add_message("Server", message.get("content", "kurac"), False)
-                    logging.debug(f'AJMOO {message}')
-                    await self.screen.add_message(message)
+
+                    if message.get("type") == "private":
+                        sender = message.get("sender")
+
+                        if sender not in self.client.chat_histories.keys():
+                            self.client.chat_histories[sender] = []
+
+                        self.client.chat_histories[message.get(
+                            "sender")].append(message)
+                        await self.screen.add_message(message)
+                        logging.debug('STIGLA PRIVATNA')
+                        if sender not in self.client.all_dms and sender not in self.client.all_groups:
+                            logging.debug("NOVI BUTTON")
+                            button = Button(label=sender, id=f"chat_{sender}")
+                            self.screen.chat_list.mount(button)
+                            self.client.all_dms.append(sender)
+
+                    elif message.get("type") == "group":
+                        logging.debug('STIGLA GRUPNA')
+                        await self.screen.add_message(message)
+
+                    elif message.get("type") == "success":
+                        for u in self.client.chat_histories.keys():
+                            for m in self.client.chat_histories[u]:
+                                if m.get("timestamp") == message.get("timestamp"):
+                                    # logging.debug(
+                                    #     f'ajdee -> {m.get("timestamp")}')
+                                    await self.screen.add_message(m)
+                        logging.debug('USPIO POSLAT')
+
+                    elif message.get("type") == "error":
+                        logging.debug('ODJEBALO NAS')
+
+                    # self.client.chat_histories[message.get("sender")] = []
+                    # [logging.debug(f'{u}')
+                    #  for u in self.client.chat_histories.keys()]
 
             await asyncio.sleep(0.1)  # Prevent tight loop
         # if out of the loop, try to reconnect
@@ -747,15 +781,18 @@ class ChatApp(App):
         if isinstance(self.screen, ChatScreen):
             message = self.screen.message_input.value.strip()
             if message:
-                chat_type = self.client.chat_histories[self.client.current_group].get(
-                    "type", "")
-                if chat_type == "":
-                    logging.debug("ujebo si ga brate")
-                    return
+
+                chat_type = "private" if self.client.current_chat in self.client.all_dms else "group_name"
+
+                # chat_type = self.client.chat_histories[self.client.current_chat].get(
+                #     "type", "")
+                # if chat_type == "":
+                #     logging.debug("ujebo si ga brate")
+                #     return
                 message_json = {
                     "type": chat_type,
                     "sender": self.username,
-                    "recipient" if chat_type == "private" else "group_name": self.client.current_group,
+                    "recipient" if chat_type == "private" else "group_name": self.client.current_chat,
                     "timestamp": datetime.now().isoformat(),
                     "message": {
                         "ciphertext": message,
@@ -764,7 +801,9 @@ class ChatApp(App):
                     },  # This will be encrypted in the future
                 }
                 self.client.send_message(message_json)
+                self.client.chat_histories[self.client.current_chat].append(
+                    message_json)
                 # await self.screen.add_message("You", message, False)
-                asyncio.create_task(
-                    self.screen.add_message(message_json))
+                # asyncio.create_task(
+                #     self.screen.add_message(message_json))
                 self.screen.message_input.value = ""

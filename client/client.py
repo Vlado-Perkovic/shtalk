@@ -75,11 +75,11 @@ class ChatClient:
             try:
                 self.client_socket.sendall(
                     json.dumps(message_json).encode("utf-8"))
-                receiver = message_json.get("receiver", "")
-                if receiver not in self.chat_histories:
-                    # Initialize chat history if it doesn't exist
-                    self.chat_histories[receiver] = []
-                self.chat_histories[receiver].append(message_json)
+                recipient = message_json.get("recipient", "")
+                # if recipient not in self.chat_histories:
+                # Initialize chat history if it doesn't exist
+                #     self.chat_histories[recipient] = []
+                # self.chat_histories[recipient].append(message_json)
             except Exception as e:
                 print(f"Error sending message: {e}")
 
@@ -115,12 +115,76 @@ class ChatClient:
                 logging.debug(f"Error during authentication: {e}")
                 return False
 
+    def register(self, message_json: {}, timeout: float = 5.0):
+        # return False
+        if self.is_connected and self.client_socket:
+            try:
+                # Set timeout for the socket
+                self.client_socket.settimeout(timeout)
+
+                # Send authentication request
+                self.client_socket.sendall(
+                    json.dumps(message_json).encode("utf-8"))
+
+                # Wait for server response
+                logging.debug("zapeo")
+                response_data = self.client_socket.recv(
+                    1024)  # Adjust buffer size if needed
+                response_json = json.loads(response_data.decode("utf-8"))
+
+                # Reset the timeout to default (blocking mode)
+                self.client_socket.settimeout(None)
+
+                # Check response for success or failure
+                if response_json.get("type") == "success":
+                    return True
+                else:
+                    return False
+            except socket.timeout:
+                logging.debug("Authentication timed out.")
+                return None  # Indicate a timeout occurred
+            except Exception as e:
+                logging.debug(f"Error during authentication: {e}")
+                return False
+
     def create_new_chat(self, username):
-        self.chat_histories[username] = []
+        self.chat_histories[username] = {"type": "private",
+                                         "content": []}
         [logging.debug(f'username: {u}') for u in self.chat_histories.keys()]
 
-    def add_user_to_group(self, username, group_name):
-        pass
+    def create_new_group(self, message_json: {}, timeout: float = 5.0):
+        if self.is_connected and self.client_socket:
+            try:
+                # Set timeout for the socket
+                self.client_socket.settimeout(timeout)
+
+                # Send authentication request
+                self.client_socket.sendall(
+                    json.dumps(message_json).encode("utf-8"))
+
+                # Wait for server response
+                logging.debug("zapeo")
+                response_data = self.client_socket.recv(
+                    1024)  # Adjust buffer size if needed
+                response_json = json.loads(response_data.decode("utf-8"))
+
+                # Reset the timeout to default (blocking mode)
+                self.client_socket.settimeout(None)
+
+                # Check response for success or failure
+                if response_json.get("type") == "success":
+                    return True
+                else:
+                    return False
+            except socket.timeout:
+                logging.debug("Authentication timed out.")
+                return None  # Indicate a timeout occurred
+            except Exception as e:
+                logging.debug(f"Error during authentication: {e}")
+                return False
+        self.chat_histories[group_name] = {"type": "group",
+                                           "content": []}
+        [logging.debug(f'username: {u}') for u in self.chat_histories.keys()]
 
     def close(self):
         """
@@ -150,11 +214,11 @@ class ChatClient:
             if data:
                 message = json.loads(data.decode("utf-8"))
                 logging.debug(f'data: {message}')
-                receiver = message.get("receiver", "general")
+                recipient = message.get("recipient", "general")
 
-                if receiver not in self.chat_histories:
-                    self.chat_histories[receiver] = []
-                self.chat_histories[receiver].append(message)
+                if recipient not in self.chat_histories:
+                    self.chat_histories[recipient] = []
+                self.chat_histories[recipient].append(message)
                 return message
         except BlockingIOError:
             return None
@@ -168,7 +232,7 @@ class ChatClient:
             return None
 
     def get_chat_history(self, chat_name: str):
-        return self.chat_histories.get(chat_name, [])
+        return self.chat_histories[chat_name].get("content", "")
 
 
 class LoginScreen(Screen):
@@ -257,6 +321,8 @@ class RegisterScreen(Screen):
         yield Static("Register", id="register_title")
         self.username_input = Input(
             placeholder="Username", id="register_username")
+        self.email_input = Input(
+            placeholder="email", id="register_email")
         self.password_input = Input(
             placeholder="Password", id="register_password", password=True)
         self.confirm_password_input = Input(
@@ -264,6 +330,7 @@ class RegisterScreen(Screen):
         self.register_button = Button(label="Register", id="register_button")
         self.back_button = Button(label="Back", id="back_button")
         yield self.username_input
+        yield self.email_input
         yield self.password_input
         yield self.confirm_password_input
         yield self.register_button
@@ -272,10 +339,11 @@ class RegisterScreen(Screen):
     async def on_button_pressed(self, button: Button):
         if button.button.id == "register_button":
             username = self.username_input.value.strip()
+            email = self.email_input.value.strip()
             password = self.password_input.value.strip()
             confirm_password = self.confirm_password_input.value.strip()
             if password == confirm_password:
-                await self.app.handle_register(username, password)
+                await self.app.handle_register(username, email, password)
             else:
                 await self.app.show_error("Passwords do not match")
         elif button.button.id == "back_button":
@@ -323,7 +391,7 @@ class ChatScreen(Screen):
 
     async def on_mount(self):
         await self.update_chat_list()
-        await self.load_chat_history(self.client.current_group)
+        # await self.load_chat_history(self.client.current_group)
 
     async def update_chat_list(self):
 
@@ -342,8 +410,6 @@ class ChatScreen(Screen):
         messages = self.client.get_chat_history(chat_name)
         for message in messages:
             logging.debug(f'MESSAGE -> {message}')
-            logging.debug(f'{message["sender"]}, {message["sender"]}, {
-                          message["content"]}, {False})')
             await self.add_message(message)
 
     async def on_button_pressed(self, button: Button):
@@ -359,12 +425,22 @@ class ChatScreen(Screen):
 
             message = self.message_input.value.strip()
             if message:
+                chat_type = self.client.chat_histories[self.client.current_group].get(
+                    "type", "")
+                if chat_type == "":
+                    logging.debug("ujebo si ga brate")
+                    return
                 message_json = {
-                    "id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
-                    "content": message,  # This will be encrypted in the future
+                    "type": chat_type,
+                    "sender": "vlado",
+                    "recipient": self.client.current_group,
                     "timestamp": datetime.now().isoformat(),
-                    "receiver": self.client.current_group,
-                    "sender": "vlado",  # Replace with the actual username
+                    "message": {
+                        "ciphertext": message,
+                        "iv": "base64_encoded_initialization_vector",
+                        "signature": "base64_encoded_signature",
+                    },  # This will be encrypted in the future
+                    # Replace with the actual username
                 }
 
                 self.client.send_message(message_json)
@@ -422,20 +498,19 @@ class ChatScreen(Screen):
 
             if group_name and members:
                 member_list = [m.strip() for m in members.split(",")]
-                new_group = self.client.create_new_chat(
-                    group_name, chat_type="Group Chat", members=member_list)
-                if new_group:
-                    self.add_new_chat_to_ui(new_group)
-                    self.load_chat_history(new_group["id"])
+                new_group = self.app.handle_create_group(
+                    group_name, members=member_list)
+                # if new_group:
+                await self.update_chat_list()
 
-            self.chat_list_container.remove(self.group_name_input)
-            self.chat_list_container.remove(self.group_members_input)
-            self.chat_list_container.remove(self.confirm_new_group_button)
+            self.group_name_input.remove()
+            self.group_members_input.remove()
+            self.confirm_new_group_button.remove()
 
     async def add_message(self, message_json: json):
         try:
             sender = message_json.get("sender", "Unknown")
-            content = message_json.get("content", "")
+            content = message_json.get("message", "").get("ciphertext", "")
             timestamp = message_json.get(
                 "timestamp", datetime.now().strftime("%H:%M:%S"))
             formatted_message = f"[{timestamp}] {sender}: {content}"
@@ -539,7 +614,8 @@ class ChatApp(App):
                     "email": email,
                     "password": password,
                 }
-                self.client.register(register_payload)
+                if self.client.register(register_payload):
+                    await self.push_screen(LoginScreen(self.client))
 
                 # Simulate server response (you should handle real responses)
                 # if username == "user" and password == "pass":
@@ -570,8 +646,6 @@ class ChatApp(App):
                 # if self.client.authenticate(login_payload, 5.0):
 
                 if True:
-                    # # Simulate server response (you should handle real responses)
-                    # if username == "user" and password == "pass":
                     await self.push_screen(ChatScreen(self.client))
                 else:
                     await self.show_error("Invalid login credentials")
@@ -623,16 +697,24 @@ class ChatApp(App):
         # Implement error display logic (e.g., via a modal or notification bar)
 
     def action_send_message(self):
-        logging.debug("AAAAAAAAAAAAAAAAAAAAAA")
         if isinstance(self.screen, ChatScreen):
             message = self.screen.message_input.value.strip()
             if message:
+                chat_type = self.client.chat_histories[self.client.current_group].get(
+                    "type", "")
+                if chat_type == "":
+                    logging.debug("ujebo si ga brate")
+                    return
                 message_json = {
-                    "id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
-                    "content": message,  # This will be encrypted in the future
+                    "type": chat_type,
+                    "sender": "vlado",
+                    "recipient" if chat_type == "private" else "group_name": self.client.current_group,
                     "timestamp": datetime.now().isoformat(),
-                    "receiver": self.client.current_group,
-                    "sender": "vlado",  # Replace with the actual username
+                    "message": {
+                        "ciphertext": message,
+                        "iv": "base64_encoded_initialization_vector",
+                        "signature": "base64_encoded_signature",
+                    },  # This will be encrypted in the future
                 }
                 self.client.send_message(message_json)
                 # await self.screen.add_message("You", message, False)

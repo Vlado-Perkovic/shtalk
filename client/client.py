@@ -103,6 +103,7 @@ class ChatClient:
                 logging.debug("zapeo")
                 # Reset the timeout to default (blocking mode)
                 self.client_socket.settimeout(None)
+                self.client_socket.setblocking(False)
                 logging.debug("zapeo3")
 
                 b = response_json.get("type") == "success"
@@ -614,17 +615,21 @@ class ChatApp(App):
         """
         Continuously listens for incoming messages from the server.
         """
-        if isinstance(self.screen, ChatScreen):
-            while self.client.is_connected:
+        while self.client.is_connected:
+            logging.debug('AJMOO VAN')
+
+            if isinstance(self.screen, ChatScreen):
+                logging.debug('AJMOO UNUTRA')
+
                 message = self.client.receive_messages()
                 if message:
                     # await self.screen.add_message("Server", message.get("content", "kurac"), False)
                     logging.debug(f'AJMOO {message}')
                     await self.screen.add_message(message)
 
-                await asyncio.sleep(0.1)  # Prevent tight loop
+            await asyncio.sleep(0.1)  # Prevent tight loop
         # if out of the loop, try to reconnect
-            await self.handle_disconnect()
+        await self.handle_disconnect()
 
     async def handle_disconnect(self):
         """
@@ -685,6 +690,7 @@ class ChatApp(App):
                 if self.client.authenticate(login_payload, 20.0):
                     logging.debug("LOGIN SUCCESS")
                 # if True:
+                    self.username = username
                     await self.push_screen(ChatScreen(self.client))
                 else:
                     await self.show_error("Invalid login credentials")

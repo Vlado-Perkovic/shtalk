@@ -182,6 +182,7 @@ class ChatClient:
             except Exception as e:
                 logging.debug(f"Error during authentication: {e}")
                 return False
+
         self.chat_histories[group_name] = {"type": "group",
                                            "content": []}
         [logging.debug(f'username: {u}') for u in self.chat_histories.keys()]
@@ -635,10 +636,16 @@ class ChatApp(App):
         if self.client.is_connected:
             # Simulate sending login credentials to the server
             try:
+
+                public_key = ""
+                with open('.ssh/id_ed25519.pub', 'r') as f:
+                    public_key = f.read()
+
                 login_payload = {
                     "type": "login",
                     "username": username,
                     "password": password,
+                    "public_key": public_key,
                 }
                 if self.client.authenticate(login_payload, 5.0):
                     logging.debug("LOGIN SUCCESS")

@@ -105,7 +105,8 @@ async def send_private_message(message, database):
 
     return {
                 "type": "success",
-                "message": f"Sent to {recipient}."
+                "message": f"Sent to {recipient}.",
+                "timestamp": timestamp
             }
 
 
@@ -241,7 +242,8 @@ async def send_group_message(message, database):
 
     return {
                 "type": "success",
-                "message": f"Sent to {recipient}."
+                "message": f"Sent to {recipient}.",
+                "timestamp":timestamp
             }
 
 

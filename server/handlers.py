@@ -49,8 +49,7 @@ async def handle_client(reader, writer):
                 try:
                     loggedIn = False
                     clients.pop(username)
-                    d = publicKeys.pop(username)
-                    print(d)
+                    publicKeys.pop(username)
                 except:
                     response = {
                         'type':'error',

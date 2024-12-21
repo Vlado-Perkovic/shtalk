@@ -39,15 +39,23 @@ async def handle_client(reader, writer):
                     clients[message['username']] = writer
                     publicKeys[message['username']] = message['public_key']
                 await writer.drain()
-            elif message.get('type') == 'log_out':
+            elif message.get('type') == 'log_out' and loggedIn:
+                username = message['username']
                 response = {
                     'type':'success',
                     'message' : 'Logged out successfully'
                 }
+                try:
+                    loggedIn = False
+                    clients.pop(username)
+                    d = publicKeys.pop(username)
+                    print(d)
+                except:
+                    response = {
+                        'type':'error',
+                        'message' : 'Logged out failed'
+                }
                 writer.write(json.dumps(response).encode())
-                loggedIn = False
-                clients.pop('username')
-                publicKeys.pop('username')
                 await writer.drain()
             elif message.get('type') == 'register':
                 response = await utils.register_user(message['username'], message['email'], message['password'], database)
@@ -62,7 +70,7 @@ async def handle_client(reader, writer):
                 writer.write(json.dumps(response).encode())
                 await writer.drain()
             elif message.get('type') == 'new_group' and loggedIn:
-                response = await utils.create_group(message['username'],message['group_name'],message['description'],database)
+                response = await utils.create_group(message['usernames'],message['group_name'],message['description'],database)
                 writer.write(json.dumps(response).encode())
                 await writer.drain()
             elif message.get('type') == 'add' and loggedIn:

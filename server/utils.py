@@ -44,26 +44,30 @@ async def send_private_message(message, database):
     except Exception as error:
         print(f"[Parsing Error] {error}")
         return {"type": "error",
-                "message": "Parsing error."
+                "message": "Parsing error.",
+                "timestamp": timestamp
                 }
  
     if sender not in clients:
         return {"type": "error",
-                "message": f"User {sender} not found."
+                "message": f"User {sender} not found.",
+                "timestamp": timestamp
                 }
     if recipient not in clients:
         sender_writer = clients.get(sender)
         if sender_writer:
             print(f"[Error] User {recipient} not found when {sender} tried to send a message.")
             return {"type": "error",
-                "message": f"User {recipient} not found."
+                "message": f"User {recipient} not found.",
+                "timestamp": timestamp
                 }
     try:
         target_writer = clients[recipient]
     except Exception as e:
         return {
                 "type": "error",
-                "message": f"Failed to deliver message to {recipient}. - Connection lost"
+                "message": f"Failed to deliver message to {recipient}. - Connection lost",
+                "timestamp": timestamp
             }
     try:
         msg_to_send = json.dumps({
@@ -100,7 +104,8 @@ async def send_private_message(message, database):
         print(f"[Connection Error] Failed to deliver message to {recipient} - Connection lost.")
         return {
                 "type": "error",
-                "message": f"Failed to deliver message to {recipient}. - Connection lost"
+                "message": f"Failed to deliver message to {recipient}. - Connection lost",
+                "timestamp": timestamp
             }
 
     return {
@@ -123,7 +128,8 @@ async def send_group_message(message, database):
     except Exception as error:
         print(f"[Parsing Error] {error}")
         return {"type": "error",
-                "message": "Parsing error."
+                "message": "Parsing error.",
+                "timestamp": timestamp
                 }
     
     groups = await get_groups(database)
@@ -134,7 +140,8 @@ async def send_group_message(message, database):
             print(f"[Error] Group {group_name} not found or sender {sender} lacks permissions.")
             return {
                 "type": "error",
-                "message": f"Group {group_name} does not exist or sender has no permission."
+                "message": f"Group {group_name} does not exist or sender has no permission.",
+                "timestamp": timestamp
             }
         
     user_group_ids = await get_users_in_group(group_name, database)
@@ -151,7 +158,8 @@ async def send_group_message(message, database):
         print(f"Error getting sender ID: {e}")
         return {
                 "type": "error",
-                "message": f"Sender {sender} does not exist or has no permission."
+                "message": f"Sender {sender} does not exist or has no permission.",
+                "timestamp": timestamp
             }
     
     if user_id_sender not in user_group_ids:
@@ -160,7 +168,8 @@ async def send_group_message(message, database):
             print(f"[Error] Sender {sender} not found or sender {sender} lacks permissions.")
             return {
                 "type": "error",
-                "message": f"Sender {sender} does not exist or has no permission."
+                "message": f"Sender {sender} does not exist or has no permission.",
+                "timestamp": timestamp
             }
     
     try:
@@ -175,7 +184,8 @@ async def send_group_message(message, database):
         print(f"Error getting sender ID: {e}")
         return {
                 "type": "error",
-                "message": f"Recipient {recipient} does not exist or sender has no permission."
+                "message": f"Recipient {recipient} does not exist or sender has no permission.",
+                "timestamp": timestamp
             }
     
     
@@ -185,7 +195,8 @@ async def send_group_message(message, database):
             print(f"[Error] Recipient  {recipient} not found or sender {sender} lacks permissions.")
             return {
                 "type": "error",
-                "message": f"Recipient {recipient} does not exist or sender has no permission."
+                "message": f"Recipient {recipient} does not exist or sender has no permission.",
+                "timestamp": timestamp
             }
         
     if recipient not in clients:
@@ -193,14 +204,16 @@ async def send_group_message(message, database):
         if sender_writer:
             print(f"[Error] User {recipient} not found when {sender} tried to send a message.")
             return {"type": "error",
-                "message": f"User {recipient} not found."
+                "message": f"User {recipient} not found.",
+                "timestamp": timestamp
                 }
     try:
         target_writer = clients[recipient]
     except Exception as e:
         return {
                 "type": "error",
-                "message": f"Failed to deliver message to {recipient}. - Connection lost"
+                "message": f"Failed to deliver message to {recipient}. - Connection lost",
+                "timestamp": timestamp
             }
     try:
         msg_to_send = json.dumps({
@@ -237,7 +250,8 @@ async def send_group_message(message, database):
         print(f"[Connection Error] Failed to deliver message to {recipient} - Connection lost.")
         return {
                 "type": "error",
-                "message": f"Failed to deliver message to {recipient}. - Connection lost"
+                "message": f"Failed to deliver message to {recipient}. - Connection lost",
+                "timestamp": timestamp
             }
 
     return {
@@ -370,7 +384,7 @@ async def create_group(usernames, group_name, description, database):
 
     return {"type":"success",
             "message": f"Group '{group_name}' created",
-            "users" : added}
+            "usernames" : added}
 
 
 async def add_user_to_group(group_name, username, database):

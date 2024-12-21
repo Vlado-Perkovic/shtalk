@@ -74,7 +74,7 @@ class ChatClient:
         if self.is_connected and self.client_socket:
             try:
                 self.client_socket.sendall(
-                    json.dumps(message_json).encode("utf-8"))
+                    json.dumps(message_json).encode()+ b'\n')
                 recipient = message_json.get("recipient", "")
                 # if recipient not in self.chat_histories:
                 # Initialize chat history if it doesn't exist
@@ -83,7 +83,7 @@ class ChatClient:
             except Exception as e:
                 print(f"Error sending message: {e}")
 
-    def authenticate(self, message_json: {}, timeout: float = 5.0):
+    def authenticate(self, message_json: {}, timeout: float = 20.0):
         # return False
         if self.is_connected and self.client_socket:
             try:
@@ -92,14 +92,14 @@ class ChatClient:
 
                 # Send authentication request
                 self.client_socket.sendall(
-                    json.dumps(message_json).encode("utf-8"))
+                    json.dumps(message_json).encode()+ b'\n')
 
                 # Wait for server response
-                logging.debug("zapeo")
                 response_data = self.client_socket.recv(
-                    1024)  # Adjust buffer size if needed
-                response_json = json.loads(response_data.decode("utf-8"))
-
+                    1024) 
+                logging.debug(response_data.decode()) # Adjust buffer size if needed
+                response_json = json.loads(response_data.decode())
+                logging.debug("zapeo")
                 # Reset the timeout to default (blocking mode)
                 self.client_socket.settimeout(None)
 
@@ -124,7 +124,7 @@ class ChatClient:
 
                 # Send authentication request
                 self.client_socket.sendall(
-                    json.dumps(message_json).encode("utf-8"))
+                    json.dumps(message_json).encode()+ b'\n')
 
                 # Wait for server response
                 logging.debug("zapeo")
@@ -160,7 +160,7 @@ class ChatClient:
 
                 # Send authentication request
                 self.client_socket.sendall(
-                    json.dumps(message_json).encode("utf-8"))
+                    json.dumps(message_json).encode()+ b'\n')
 
                 # Wait for server response
                 logging.debug("zapeo")
@@ -647,7 +647,7 @@ class ChatApp(App):
                     "password": password,
                     "public_key": public_key,
                 }
-                if self.client.authenticate(login_payload, 5.0):
+                if self.client.authenticate(login_payload, 20.0):
                     logging.debug("LOGIN SUCCESS")
                 # if True:
                     await self.push_screen(ChatScreen(self.client))
@@ -701,6 +701,7 @@ class ChatApp(App):
         # Implement error display logic (e.g., via a modal or notification bar)
 
     def action_send_message(self):
+        logging.debug("evo tu sam")
         if isinstance(self.screen, ChatScreen):
             message = self.screen.message_input.value.strip()
             if message:

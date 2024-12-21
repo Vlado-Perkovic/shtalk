@@ -615,13 +615,10 @@ class ChatApp(App):
                     "password": password,
                 }
                 if self.client.register(register_payload):
+                    logging.debug("REGISTER SUCCESS")
                     await self.push_screen(LoginScreen(self.client))
-
-                # Simulate server response (you should handle real responses)
-                # if username == "user" and password == "pass":
-                #     await self.push_screen(ChatScreen(self.client))
-                # else:
-                #     await self.show_error("Invalid login credentials")
+                else:
+                    logging.debug("REGISTER FAIL")
 
             except Exception as e:
                 await self.show_error(f"Error during login: {str(e)}")
@@ -643,9 +640,9 @@ class ChatApp(App):
                     "username": username,
                     "password": password,
                 }
-                # if self.client.authenticate(login_payload, 5.0):
-
-                if True:
+                if self.client.authenticate(login_payload, 5.0):
+                    logging.debug("LOGIN SUCCESS")
+                # if True:
                     await self.push_screen(ChatScreen(self.client))
                 else:
                     await self.show_error("Invalid login credentials")
